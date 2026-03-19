@@ -1,15 +1,3 @@
-
-
-
-Here is the complete, highly detailed `progress.md` file. 
-
-This document is perfectly structured to act as the **API Contract** for a frontend developer or an AI agent. You can literally hand this file over, and they will know exactly how to connect to the backend, what payloads to send, and how to listen to the real-time events.
-
----
-
-### Create a file named `progress.md` in your project root and paste this inside:
-
-```markdown
 # Vendly - Backend Integration Guide & API Documentation
 
 ## 🚀 Project Overview
@@ -33,7 +21,6 @@ All responses follow a standard format:
   "data": {} // or "message", "count", "errors"
 }
 ```
-
 ---
 
 ## 📚 REST API Endpoints
