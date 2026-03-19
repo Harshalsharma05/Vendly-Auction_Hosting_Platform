@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
+import bcrypt from 'bcrypt';
 
 const userSchema = new mongoose.Schema(
   {
@@ -58,5 +58,9 @@ userSchema.pre('save', async function (next) {
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
+
+// The email field already has an index because we set unique: true.
+// Let's add an index for role, which speeds up admin queries (like finding all clients).
+userSchema.index({ role: 1 });
 
 export default mongoose.model('User', userSchema);
