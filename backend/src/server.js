@@ -1,12 +1,12 @@
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 dotenv.config();
 
-import http from 'http';
-import { Server } from 'socket.io'; // <-- Import Socket.IO
-import app from './app.js';
-import connectDB from './config/database.js';
-import { socketAuth } from './middlewares/socketAuthMiddleware.js'; // <-- Import Auth
-import { setupAuctionSockets } from './sockets/auction.socket.js'; // <-- Import Handlers
+import http from "http";
+import { Server } from "socket.io"; // <-- Import Socket.IO
+import app from "./app.js";
+import connectDB from "./config/database.js";
+import { socketAuth } from "./middlewares/socketAuthMiddleware.js"; // <-- Import Auth
+import { setupAuctionSockets } from "./sockets/auction.socket.js"; // <-- Import Handlers
 
 // 1. Connect to Database
 connectDB();
@@ -17,8 +17,8 @@ const server = http.createServer(app);
 // 3. Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: '*', // In production, restrict this to your frontend domain
-    methods: ['GET', 'POST'],
+    origin: "*", // In production, restrict this to your frontend domain
+    methods: ["GET", "POST"],
   },
 });
 
@@ -28,8 +28,11 @@ io.use(socketAuth);
 // 5. Setup Auction Event Listeners
 setupAuctionSockets(io);
 
+// Make io available inside REST controllers via req.app.get('io')
+app.set("io", io);
+
 // We export `io` so we can use it inside our REST controllers later if needed!
-export { io }; 
+export { io };
 
 const PORT = process.env.PORT || 5000;
 

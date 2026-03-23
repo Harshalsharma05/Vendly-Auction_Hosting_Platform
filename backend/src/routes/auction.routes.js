@@ -1,4 +1,4 @@
-import express from 'express';
+import express from "express";
 import {
   createAuction,
   getAuctions,
@@ -6,19 +6,21 @@ import {
   getAuctionById,
   updateAuction,
   deleteAuction,
-} from '../controllers/auction.controller.js';
-import { protect, authorize } from '../middlewares/authMiddleware.js';
+} from "../controllers/auction.controller.js";
+import { protect, authorize } from "../middlewares/authMiddleware.js";
 
 const router = express.Router();
 
 // Public Routes
-router.get('/', getAuctions);
-router.get('/:id', getAuctionById); // Note: Always put dynamic routes like /:id below static ones like /my-auctions
+router.get("/", getAuctions);
 
 // Protected Client Routes
-router.post('/', protect, authorize('client'), createAuction);
-router.get('/client/my-auctions', protect, authorize('client'), getMyAuctions);
-router.patch('/:id', protect, authorize('client'), updateAuction);
-router.delete('/:id', protect, authorize('client'), deleteAuction);
+router.post("/", protect, authorize("client"), createAuction);
+router.get("/client/my-auctions", protect, authorize("client"), getMyAuctions);
+router.patch("/:id", protect, authorize("client"), updateAuction);
+router.delete("/:id", protect, authorize("client"), deleteAuction);
+
+// Public dynamic route should be placed after static/protected routes
+router.get("/:id", getAuctionById);
 
 export default router;

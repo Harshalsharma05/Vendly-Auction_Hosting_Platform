@@ -7,8 +7,36 @@
 
 import { useRef, useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import SectionHeader        from "../ui/SectionHeader";
+import SectionHeader from "../ui/SectionHeader";
 import { TRENDING_ARTISTS } from "../../data/mockData";
+import axiosInstance from "../../lib/axios";
+
+const FALLBACK_HOST_IMAGE =
+  "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=200&q=80";
+
+const HOSTS_ENDPOINT_CANDIDATES = [
+  "/clients/top-hosts",
+  "/clients/hosts",
+  "/clients",
+];
+
+function mapHostsToCards(hosts) {
+  return hosts.map((host, index) => ({
+    id: host?._id || host?.id || `host-${index}`,
+    name: host?.name || host?.organizationName || "Vendly Host",
+    location: host?.location || host?.country || "Global",
+    images:
+      Array.isArray(host?.images) && host.images.length > 0
+        ? host.images.slice(0, 4)
+        : [
+            FALLBACK_HOST_IMAGE,
+            FALLBACK_HOST_IMAGE,
+            FALLBACK_HOST_IMAGE,
+            FALLBACK_HOST_IMAGE,
+          ],
+    avatar: host?.avatar || host?.profileImage || FALLBACK_HOST_IMAGE,
+  }));
+}
 
 function ArtistMosaic({ images }) {
   return (
@@ -28,11 +56,11 @@ function ArtistMosaic({ images }) {
 }
 
 function HostCard({ artist }) {
-  const [following,    setFollowing]    = useState(false);
+  const [following, setFollowing] = useState(false);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
 
   return (
-    <article className="group shrink-0 w-[220px] sm:w-[240px] flex flex-col gap-3 cursor-pointer">
+    <article className="group shrink-0 w-55 sm:w-60 flex flex-col gap-3 cursor-pointer">
       <ArtistMosaic images={artist.images} />
 
       <div className="flex items-center gap-2.5 px-0.5">
@@ -82,9 +110,47 @@ function HostCard({ artist }) {
 }
 
 export default function TopHosts() {
-  const trackRef   = useRef(null);
-  const [canLeft,  setCanLeft]  = useState(false);
+  const trackRef = useRef(null);
+  const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(true);
+  const [hosts, setHosts] = useState(TRENDING_ARTISTS);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function fetchHosts() {
+      for (const endpoint of HOSTS_ENDPOINT_CANDIDATES) {
+        try {
+          const response = await axiosInstance.get(endpoint);
+          const payload = response?.data?.data;
+          const data = Array.isArray(payload)
+            ? payload
+            : Array.isArray(payload?.hosts)
+              ? payload.hosts
+              : [];
+
+          if (data.length > 0) {
+            if (isMounted) {
+              setHosts(mapHostsToCards(data));
+            }
+            return;
+          }
+        } catch {
+          // Try next candidate endpoint and fallback to mock hosts if all fail.
+        }
+      }
+
+      if (isMounted) {
+        setHosts(TRENDING_ARTISTS);
+      }
+    }
+
+    fetchHosts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const updateArrows = () => {
     const el = trackRef.current;
@@ -120,7 +186,9 @@ export default function TopHosts() {
             "absolute left-0 top-[40%] -translate-y-1/2 -translate-x-4 z-10",
             "w-8 h-8 rounded-full bg-white border border-brand-border shadow-md",
             "flex items-center justify-center transition-all duration-200",
-            canLeft ? "opacity-100 cursor-pointer hover:bg-brand-light" : "opacity-0 pointer-events-none",
+            canLeft
+              ? "opacity-100 cursor-pointer hover:bg-brand-light"
+              : "opacity-0 pointer-events-none",
           ].join(" ")}
         >
           <ChevronLeft size={16} className="text-brand-charcoal" />
@@ -130,7 +198,7 @@ export default function TopHosts() {
           ref={trackRef}
           className="flex gap-5 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
         >
-          {TRENDING_ARTISTS.map((artist) => (
+          {hosts.map((artist) => (
             <HostCard key={artist.id} artist={artist} />
           ))}
         </div>
@@ -142,7 +210,9 @@ export default function TopHosts() {
             "absolute right-0 top-[40%] -translate-y-1/2 translate-x-4 z-10",
             "w-8 h-8 rounded-full bg-white border border-brand-border shadow-md",
             "flex items-center justify-center transition-all duration-200",
-            canRight ? "opacity-100 cursor-pointer hover:bg-brand-light" : "opacity-0 pointer-events-none",
+            canRight
+              ? "opacity-100 cursor-pointer hover:bg-brand-light"
+              : "opacity-0 pointer-events-none",
           ].join(" ")}
         >
           <ChevronRight size={16} className="text-brand-charcoal" />

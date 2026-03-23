@@ -7,14 +7,72 @@
 
 import { useRef, useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import SectionHeader        from "../ui/SectionHeader";
-import ItemCard             from "../ui/ItemCard";
+import toast from "react-hot-toast";
+import { useNavigate } from "react-router-dom";
+import SectionHeader from "../ui/SectionHeader";
+import ItemCard from "../ui/ItemCard";
 import { ARTWORKS_FOR_SALE } from "../../data/mockData";
+import axiosInstance from "../../lib/axios";
+
+const FALLBACK_AUCTION_IMAGE =
+  "https://images.unsplash.com/photo-1579546929662-711aa81148cf?w=400&q=80";
+
+function formatStartTime(startTime) {
+  if (!startTime) {
+    return "Start time to be announced";
+  }
+
+  const parsedDate = new Date(startTime);
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "Start time to be announced";
+  }
+
+  return `Starts ${parsedDate.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })}`;
+}
+
+function mapAuctionsToCards(auctions) {
+  return auctions.map((auction, index) => {
+    const status = (auction?.status || "scheduled").toLowerCase();
+    return {
+      id: auction?._id || auction?.id || `auction-${index}`,
+      title: auction?.title || "Untitled Auction",
+      artist: formatStartTime(auction?.startTime),
+      medium: `Status: ${status.charAt(0).toUpperCase()}${status.slice(1)}`,
+      price: status === "live" ? "Live Now" : "Opening Soon",
+      sold: status === "ended",
+      src: auction?.coverImage || auction?.image || FALLBACK_AUCTION_IMAGE,
+    };
+  });
+}
+
+function AuctionCardSkeleton({ keyId }) {
+  return (
+    <article
+      key={keyId}
+      className="group relative shrink-0 w-46.25 sm:w-50 md:w-53.75 flex flex-col"
+    >
+      <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-brand-light animate-pulse" />
+      <div className="pt-2.5 pb-1 flex flex-col gap-2">
+        <div className="h-4 w-4/5 rounded bg-brand-light animate-pulse" />
+        <div className="h-3 w-3/5 rounded bg-brand-light animate-pulse" />
+        <div className="h-8 w-full rounded bg-brand-light animate-pulse mt-1.5" />
+      </div>
+    </article>
+  );
+}
 
 export default function LiveAuctions() {
-  const trackRef   = useRef(null);
-  const [canLeft,  setCanLeft]  = useState(false);
+  const navigate = useNavigate();
+  const trackRef = useRef(null);
+  const [canLeft, setCanLeft] = useState(false);
   const [canRight, setCanRight] = useState(true);
+  const [auctionCards, setAuctionCards] = useState(ARTWORKS_FOR_SALE);
+  const [isLoading, setIsLoading] = useState(true);
 
   const updateArrows = () => {
     const el = trackRef.current;
@@ -24,12 +82,51 @@ export default function LiveAuctions() {
   };
 
   useEffect(() => {
+    let isMounted = true;
+
+    async function fetchAuctions() {
+      setIsLoading(true);
+
+      try {
+        const response = await axiosInstance.get("/auctions");
+        const payload = response?.data?.data;
+        const auctions = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.auctions)
+            ? payload.auctions
+            : [];
+
+        if (isMounted && auctions.length > 0) {
+          setAuctionCards(mapAuctionsToCards(auctions));
+        }
+      } catch {
+        if (isMounted) {
+          setAuctionCards(ARTWORKS_FOR_SALE);
+          toast.error(
+            "Unable to fetch live auctions. Showing curated listings.",
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    fetchAuctions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
     updateArrows();
     el.addEventListener("scroll", updateArrows, { passive: true });
     return () => el.removeEventListener("scroll", updateArrows);
-  }, []);
+  }, [auctionCards, isLoading]);
 
   const scroll = (dir) => {
     const el = trackRef.current;
@@ -65,9 +162,23 @@ export default function LiveAuctions() {
             "[&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]",
           ].join(" ")}
         >
-          {ARTWORKS_FOR_SALE.map((artwork) => (
-            <ItemCard key={artwork.id} artwork={artwork} variant="sale" />
-          ))}
+          {isLoading &&
+            Array.from({ length: 5 }).map((_, index) => (
+              <AuctionCardSkeleton
+                key={`auction-skeleton-${index}`}
+                keyId={`auction-skeleton-${index}`}
+              />
+            ))}
+
+          {!isLoading &&
+            auctionCards.map((artwork) => (
+              <ItemCard
+                key={artwork.id}
+                artwork={artwork}
+                variant="sale"
+                onOpen={() => navigate(`/auction/${artwork.id}`)}
+              />
+            ))}
         </div>
 
         <button

@@ -1,5 +1,5 @@
-import AuctionParticipant from '../models/auctionParticipant.model.js';
-import Auction from '../models/auction.model.js';
+import AuctionParticipant from "../models/auctionParticipant.model.js";
+import Auction from "../models/auction.model.js";
 
 // @desc    Join an auction
 // @route   POST /api/participants/auction/:auctionId/join
@@ -7,18 +7,20 @@ import Auction from '../models/auction.model.js';
 export const joinAuction = async (req, res, next) => {
   try {
     const { auctionId } = req.params;
-    const { role } = req.body; // 'participant' or 'spectator'
+    const { role = "participant" } = req.body || {}; // 'participant' or 'spectator'
 
     // 1. Check if auction exists and its status
     const auction = await Auction.findById(auctionId);
     if (!auction) {
       res.status(404);
-      return next(new Error('Auction not found'));
+      return next(new Error("Auction not found"));
     }
 
-    if (['ended', 'cancelled', 'draft'].includes(auction.status)) {
+    if (["ended", "cancelled", "draft"].includes(auction.status)) {
       res.status(400);
-      return next(new Error(`Cannot join an auction that is ${auction.status}`));
+      return next(
+        new Error(`Cannot join an auction that is ${auction.status}`),
+      );
     }
 
     // 2. Check if user already joined
@@ -29,14 +31,14 @@ export const joinAuction = async (req, res, next) => {
 
     if (alreadyJoined) {
       res.status(400);
-      return next(new Error('You have already joined this auction'));
+      return next(new Error("You have already joined this auction"));
     }
 
     // 3. Add to roster
     const participant = await AuctionParticipant.create({
       auctionId,
       userId: req.user._id,
-      role: role || 'participant',
+      role,
     });
 
     // 4. Update total participants count on the Auction
@@ -48,7 +50,7 @@ export const joinAuction = async (req, res, next) => {
     // Catch Mongoose duplicate key error just in case
     if (error.code === 11000) {
       res.status(400);
-      return next(new Error('You have already joined this auction'));
+      return next(new Error("You have already joined this auction"));
     }
     next(error);
   }
@@ -59,11 +61,15 @@ export const joinAuction = async (req, res, next) => {
 // @access  Public
 export const getAuctionParticipants = async (req, res, next) => {
   try {
-    const participants = await AuctionParticipant.find({ auctionId: req.params.auctionId })
-      .populate('userId', 'name email role')
-      .sort('-joinedAt');
+    const participants = await AuctionParticipant.find({
+      auctionId: req.params.auctionId,
+    })
+      .populate("userId", "name email role")
+      .sort("-joinedAt");
 
-    res.status(200).json({ success: true, count: participants.length, data: participants });
+    res
+      .status(200)
+      .json({ success: true, count: participants.length, data: participants });
   } catch (error) {
     next(error);
   }

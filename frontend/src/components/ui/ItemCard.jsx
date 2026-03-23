@@ -5,21 +5,72 @@
 // Zero Tailwind class changes.
 
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { Heart } from "lucide-react";
 import Button from "./Button";
+import { useAuth } from "../../context/AuthContext";
 
-export default function ItemCard({ artwork, variant = "sale" }) {
-  const [liked,     setLiked]     = useState(false);
+function isInteractiveTarget(target) {
+  return Boolean(target?.closest?.("button, a, input, textarea, select"));
+}
+
+export default function ItemCard({ artwork, variant = "sale", onOpen }) {
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
+  const [liked, setLiked] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
+
+  const openAuctionWithGuard = () => {
+    const auctionId = artwork?.id || artwork?._id;
+
+    if (!auctionId) {
+      if (onOpen) {
+        onOpen();
+      }
+      return;
+    }
+
+    if (!isAuthenticated) {
+      toast.error("Please log in to join auctions");
+      navigate("/auth");
+      return;
+    }
+
+    navigate(`/auction/${auctionId}`);
+  };
+
+  const handleCardClick = (event) => {
+    if (!onOpen && variant !== "sale") {
+      return;
+    }
+
+    if (isInteractiveTarget(event.target)) {
+      return;
+    }
+
+    if (variant === "sale") {
+      openAuctionWithGuard();
+      return;
+    }
+
+    onOpen();
+  };
 
   /* ── SALE variant (horizontal scroll row) ── */
   if (variant === "sale") {
     return (
-      <article className="group relative shrink-0 w-[185px] sm:w-[200px] md:w-[215px] flex flex-col">
+      <article
+        className={[
+          "group relative shrink-0 w-46.25 sm:w-50 md:w-53.75 flex flex-col",
+          onOpen ? "cursor-pointer" : "",
+        ].join(" ")}
+        onClick={handleCardClick}
+      >
         {/* Image container */}
         <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-brand-light">
           {!imgLoaded && (
-            <div className="absolute inset-0 bg-gradient-to-br from-brand-border to-brand-light animate-pulse" />
+            <div className="absolute inset-0 bg-linear-to-br from-brand-border to-brand-light animate-pulse" />
           )}
           <img
             src={artwork.src}
@@ -85,8 +136,9 @@ export default function ItemCard({ artwork, variant = "sale" }) {
             <Button
               variant={artwork.sold ? "ghost" : "primary"}
               size="sm"
-              className="!px-3 !py-1 !text-[11px] shrink-0"
+              className="px-3! py-1! text-[11px]! shrink-0"
               disabled={artwork.sold}
+              onClick={openAuctionWithGuard}
             >
               {/* ✦ CHANGED: "Get Now" → "Bid Now" */}
               {artwork.sold ? "Sold" : "Bid Now"}
@@ -96,8 +148,13 @@ export default function ItemCard({ artwork, variant = "sale" }) {
 
         {/* ✦ CHANGED: "Make Offer" → "Place Bid" */}
         {!artwork.sold && (
-          
-            <a href="#"
+          <a
+            href="#"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openAuctionWithGuard();
+            }}
             className="mt-0.5 text-[11px] font-sans text-brand-muted hover:text-brand-rust underline underline-offset-2 transition-colors w-fit"
           >
             Place Bid
@@ -110,9 +167,12 @@ export default function ItemCard({ artwork, variant = "sale" }) {
   /* ── FEATURED variant (3-col grid, taller) ── */
   return (
     <article className="group relative flex flex-col cursor-pointer">
-      <div className="relative w-full rounded-xl overflow-hidden bg-brand-light" style={{ aspectRatio: "3/4" }}>
+      <div
+        className="relative w-full rounded-xl overflow-hidden bg-brand-light"
+        style={{ aspectRatio: "3/4" }}
+      >
         {!imgLoaded && (
-          <div className="absolute inset-0 bg-gradient-to-br from-brand-border to-brand-light animate-pulse" />
+          <div className="absolute inset-0 bg-linear-to-br from-brand-border to-brand-light animate-pulse" />
         )}
         <img
           src={artwork.src}
@@ -125,7 +185,7 @@ export default function ItemCard({ artwork, variant = "sale" }) {
           ].join(" ")}
           draggable={false}
         />
-        <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/40 to-transparent rounded-b-xl pointer-events-none" />
+        <div className="absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-black/40 to-transparent rounded-b-xl pointer-events-none" />
         <button
           onClick={() => setLiked((v) => !v)}
           aria-label="Watchlist"

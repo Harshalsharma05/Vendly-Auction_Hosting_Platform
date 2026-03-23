@@ -2,16 +2,16 @@
 
 /* ── Navigation ─────────────────────────────────────────── */
 export const NAV_LINKS = [
-  { label: "Live Auctions",   href: "#" },
-  { label: "Hosts",           href: "#" },
-  { label: "Categories",      href: "#" },
-  { label: "Lots",            href: "#" },
-  { label: "Watches",         href: "#" },
-  { label: "Classic Cars",    href: "#" },
-  { label: "Real Estate",     href: "#" },
-  { label: "Events",          href: "#" },
-  { label: "Bid Advisory",    href: "#" },
-  { label: "Private Rooms",   href: "#" },
+  { label: "Live Auctions", href: "/live-auctions" },
+  { label: "Hosts", href: "/hosts" },
+  { label: "Categories", href: "/categories" },
+  { label: "Lots", href: "/lots" },
+  { label: "Watches", href: "/watches" },
+  { label: "Classic Cars", href: "/classic-cars" },
+  { label: "Real Estate", href: "/real-estate" },
+  { label: "Events", href: "/events" },
+  { label: "Bid Advisory", href: "/bid-advisory" },
+  { label: "Private Rooms", href: "/private-rooms" },
 ];
 
 /* ── Hero (panoramic room panels) ───────────────────────── */
@@ -224,7 +224,8 @@ export const TRENDING_ARTISTS = [
       "https://images.unsplash.com/photo-1614164185128-e4ec99c436d7?w=200&q=80",
       "https://images.unsplash.com/photo-1508685096489-7aacd43bd3b1?w=200&q=80",
     ],
-    avatar: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=80&q=80",
+    avatar:
+      "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=80&q=80",
   },
   {
     id: 2,
@@ -237,7 +238,8 @@ export const TRENDING_ARTISTS = [
       "https://images.unsplash.com/photo-1583121274602-3e2820c69888?w=200&q=80",
       "https://images.unsplash.com/photo-1552519507-da3b142c6e3d?w=200&q=80",
     ],
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&q=80",
+    avatar:
+      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=80&q=80",
   },
   {
     id: 3,
@@ -250,7 +252,8 @@ export const TRENDING_ARTISTS = [
       "https://images.unsplash.com/photo-1523170335258-f87a2d6a1c32?w=200&q=80",
       "https://images.unsplash.com/photo-1547996160-81dfa63595aa?w=200&q=80",
     ],
-    avatar: "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=80&q=80",
+    avatar:
+      "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=80&q=80",
   },
   {
     id: 4,
@@ -263,7 +266,8 @@ export const TRENDING_ARTISTS = [
       "https://images.unsplash.com/photo-1614164185128-e4ec99c436d7?w=200&q=80",
       "https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=200&q=80",
     ],
-    avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=80&q=80",
+    avatar:
+      "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=80&q=80",
   },
 ];
 
@@ -291,13 +295,7 @@ export const EVENTS = [
 
 /* ── Footer Links ─────────────────────────────────────────── */
 export const FOOTER_LINKS = {
-  Company: [
-    "About Vendly",
-    "Careers",
-    "Press",
-    "Contact",
-    "Legal",
-  ],
+  Company: ["About Vendly", "Careers", "Press", "Contact", "Legal"],
   Resources: [
     "Vendly for Hosts",
     "Vendly for Bidders",
