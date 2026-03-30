@@ -19,7 +19,7 @@ function getSocketUrl() {
 }
 
 export function SocketProvider({ children }) {
-  const { token, isAuthenticated, isAuthLoading } = useAuth();
+  const { token, isAuthenticated, isAuthLoading, user } = useAuth();
   const [socket, setSocket] = useState(null);
   const [isSocketConnected, setIsSocketConnected] = useState(false);
 
@@ -49,6 +49,12 @@ export function SocketProvider({ children }) {
 
     const handleConnect = () => {
       setIsSocketConnected(true);
+
+      // Join the personal user room so MY_BID_WON / MY_BID_UPDATE can be received
+      const userId = user?._id || user?.id;
+      if (userId) {
+        nextSocket.emit("JOIN_USER_ROOM", { userId });
+      }
     };
 
     const handleDisconnect = () => {

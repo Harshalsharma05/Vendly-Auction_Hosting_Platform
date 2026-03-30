@@ -37,6 +37,18 @@ export const setupAuctionSockets = (io) => {
       });
     });
 
+    socket.on("JOIN_USER_ROOM", ({ userId }) => {
+      // Verify the userId matches the authenticated socket user
+      // so no one can join another user's room
+      if (!userId || socket.user._id.toString() !== userId.toString()) {
+        return;
+      }
+
+      const room = `user_${userId}`;
+      socket.join(room);
+      console.log(`Socket ${socket.id} joined personal room: ${room}`);
+    });
+
     // --- EVENT: PLACE BID ---
     socket.on("PLACE_BID", async (data, callback) => {
       try {

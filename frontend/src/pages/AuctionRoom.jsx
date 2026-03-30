@@ -517,6 +517,18 @@ export default function AuctionRoom() {
       );
     };
 
+    // AuctionRoom.jsx — add inside the useEffect that registers socket.on("ITEM_SOLD", ...)
+
+    const handleMyBidWon = (payload) => {
+      toast.success(
+        payload?.message || `You won ${payload?.bid?.itemTitle || "an item"}!`,
+        { duration: 4000 },
+      );
+    };
+
+    socket.on("MY_BID_WON", handleMyBidWon);
+    
+
     socket.on("NEW_BID", handleNewBid);
     socket.on("BID_ERROR", handleBidError);
     socket.on("AUCTION_STARTED", handleAuctionStarted);
@@ -537,8 +549,32 @@ export default function AuctionRoom() {
       socket.off("CONTROL_ERROR", handleControlError);
       socket.off("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
       socket.off("ITEM_SOLD", handleItemSold);
+      socket.off("MY_BID_WON", handleMyBidWon);
     };
   }, [auctionId, isHost, socket]);
+
+  // AuctionRoom.jsx — add this effect near the other socket useEffects
+  useEffect(() => {
+    if (!socket || !auctionId || !isHost) {
+      return;
+    }
+
+    const joinAsHost = () => {
+      socket.emit("JOIN_AUCTION", auctionId);
+      console.log("Host auto-joined auction room:", auctionId);
+    };
+
+    if (isSocketConnected) {
+      joinAsHost();
+    }
+
+    socket.on("connect", joinAsHost);
+
+    return () => {
+      socket.off("connect", joinAsHost);
+      socket.emit("LEAVE_AUCTION", auctionId);
+    };
+  }, [auctionId, isHost, isSocketConnected, socket]);
 
   const onBidInputChange = (itemId, rawValue) => {
     setBidInputs((previousInputs) => ({

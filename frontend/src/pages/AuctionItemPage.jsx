@@ -258,6 +258,15 @@ export default function AuctionItemPage() {
       });
     };
 
+    // AuctionItemPage.jsx — add inside the useEffect that registers socket.on("NEW_BID", ...)
+    const handleMyBidWon = (payload) => {
+      toast.success(payload?.message || `You won this item!`, {
+        duration: 4000,
+      });
+    };
+
+    socket.on("MY_BID_WON", handleMyBidWon);
+
     socket.on("NEW_BID", handleNewBid);
     socket.on("BID_ERROR", handleBidError);
 
@@ -272,6 +281,7 @@ export default function AuctionItemPage() {
       socket.off("NEW_BID", handleNewBid);
       socket.off("BID_ERROR", handleBidError);
       socket.off("connect", joinRoom);
+      socket.off("MY_BID_WON", handleMyBidWon);
     };
   }, [auctionId, isSocketConnected, itemId, socket]);
 
