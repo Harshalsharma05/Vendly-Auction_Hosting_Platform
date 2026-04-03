@@ -39,9 +39,28 @@ function mapAuctionCard(auction, index) {
   };
 }
 
-function AuctionGridCard({ auction, onOpen }) {
+function getRequestErrorMessage(error, fallbackMessage) {
+  return (
+    error?.response?.data?.message ||
+    error?.response?.data?.error ||
+    fallbackMessage
+  );
+}
+
+function AuctionGridCard({
+  auction,
+  onOpen,
+  onCancel,
+  onDelete,
+  onToggleDeleteConfirm,
+  isDeleteConfirming,
+  isCancelling,
+  isDeleting,
+}) {
   const statusLabel = `${auction.status.charAt(0).toUpperCase()}${auction.status.slice(1)}`;
   const isUpcoming = auction.status === "scheduled";
+  const canCancel = ["draft", "scheduled"].includes(auction.status);
+  const canDelete = auction.status === "draft";
 
   return (
     <article
@@ -74,7 +93,7 @@ function AuctionGridCard({ auction, onOpen }) {
           Starts: {auction.startLabel}
         </p>
 
-        <div className="mt-4">
+        <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => onOpen(auction.id)}
@@ -82,7 +101,55 @@ function AuctionGridCard({ auction, onOpen }) {
           >
             Open Auction
           </button>
+
+          {canCancel && (
+            <button
+              type="button"
+              onClick={() => onCancel(auction)}
+              disabled={isCancelling || isDeleting}
+              className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isCancelling ? "Cancelling..." : "Cancel"}
+            </button>
+          )}
+
+          {canDelete && !isDeleteConfirming && (
+            <button
+              type="button"
+              onClick={() => onToggleDeleteConfirm(auction.id, true)}
+              disabled={isCancelling || isDeleting}
+              className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Delete
+            </button>
+          )}
         </div>
+
+        {canDelete && isDeleteConfirming && (
+          <div className="mt-3 rounded-xl border border-brand-border bg-brand-light/40 p-3">
+            <p className="text-[11px] sm:text-xs text-brand-muted">
+              Delete this draft auction permanently?
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onDelete(auction)}
+                disabled={isDeleting || isCancelling}
+                className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isDeleting ? "Deleting..." : "Confirm Delete"}
+              </button>
+              <button
+                type="button"
+                onClick={() => onToggleDeleteConfirm(auction.id, false)}
+                disabled={isDeleting || isCancelling}
+                className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Keep Auction
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </article>
   );
@@ -94,6 +161,9 @@ export default function MyAuctionsPage() {
 
   const [auctions, setAuctions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [deleteConfirmById, setDeleteConfirmById] = useState({});
+  const [isCancellingById, setIsCancellingById] = useState({});
+  const [isDeletingById, setIsDeletingById] = useState({});
 
   useEffect(() => {
     let isMounted = true;
@@ -146,6 +216,79 @@ export default function MyAuctionsPage() {
       isMounted = false;
     };
   }, [isAuthenticated]);
+
+  const handleToggleDeleteConfirm = (auctionId, nextValue) => {
+    setDeleteConfirmById((previousState) => ({
+      ...previousState,
+      [auctionId]: Boolean(nextValue),
+    }));
+  };
+
+  const handleCancelAuction = async (auction) => {
+    if (!auction?.id) {
+      toast.error("Unable to cancel this auction.");
+      return;
+    }
+
+    setIsCancellingById((previousState) => ({
+      ...previousState,
+      [auction.id]: true,
+    }));
+
+    try {
+      await axiosInstance.patch(`/auctions/${auction.id}`, {
+        status: "cancelled",
+      });
+
+      setAuctions((previousAuctions) =>
+        previousAuctions.filter((entry) => entry.id !== auction.id),
+      );
+      toast.success("Auction cancelled successfully.");
+    } catch (error) {
+      toast.error(
+        getRequestErrorMessage(error, "Unable to cancel this auction right now."),
+      );
+    } finally {
+      setIsCancellingById((previousState) => ({
+        ...previousState,
+        [auction.id]: false,
+      }));
+    }
+  };
+
+  const handleDeleteAuction = async (auction) => {
+    if (!auction?.id) {
+      toast.error("Unable to delete this auction.");
+      return;
+    }
+
+    setIsDeletingById((previousState) => ({
+      ...previousState,
+      [auction.id]: true,
+    }));
+
+    try {
+      await axiosInstance.delete(`/auctions/${auction.id}`);
+
+      setAuctions((previousAuctions) =>
+        previousAuctions.filter((entry) => entry.id !== auction.id),
+      );
+      setDeleteConfirmById((previousState) => ({
+        ...previousState,
+        [auction.id]: false,
+      }));
+      toast.success("Auction deleted successfully.");
+    } catch (error) {
+      toast.error(
+        getRequestErrorMessage(error, "Unable to delete this auction right now."),
+      );
+    } finally {
+      setIsDeletingById((previousState) => ({
+        ...previousState,
+        [auction.id]: false,
+      }));
+    }
+  };
 
   const groupedAuctions = useMemo(
     () => ({
@@ -238,6 +381,12 @@ export default function MyAuctionsPage() {
                         key={auction.id}
                         auction={auction}
                         onOpen={(id) => navigate(`/auction/${id}`)}
+                        onCancel={handleCancelAuction}
+                        onDelete={handleDeleteAuction}
+                        onToggleDeleteConfirm={handleToggleDeleteConfirm}
+                        isDeleteConfirming={Boolean(deleteConfirmById[auction.id])}
+                        isCancelling={Boolean(isCancellingById[auction.id])}
+                        isDeleting={Boolean(isDeletingById[auction.id])}
                       />
                     ))}
 

@@ -12,6 +12,23 @@ const FALLBACK_AUCTION_IMAGE =
 const FALLBACK_ITEM_IMAGE =
   "https://images.unsplash.com/photo-1579546929662-711aa81148cf?w=600&q=80";
 const ITEM_STATUS_OPTIONS = ["pending", "live", "sold", "unsold"];
+const INITIAL_ADD_ITEM_FORM = {
+  title: "",
+  description: "",
+  startingPrice: "",
+  bidIncrement: "0",
+  imageUrls: "",
+};
+
+function createItemEditForm(item) {
+  return {
+    title: item?.title || "",
+    description: item?.description || "",
+    startingPrice: String(item?.startingPrice ?? ""),
+    bidIncrement: String(item?.bidIncrement ?? 0),
+    imageUrls: Array.isArray(item?.imageUrls) ? item.imageUrls.join(", ") : "",
+  };
+}
 
 function normalizeEntityId(value) {
   if (!value) {
@@ -143,6 +160,15 @@ export default function AuctionRoom() {
   const [isStartingAuction, setIsStartingAuction] = useState(false);
   const [isAdvancingItem, setIsAdvancingItem] = useState(false);
   const [isEndingAuction, setIsEndingAuction] = useState(false);
+  const [isAddItemFormOpen, setIsAddItemFormOpen] = useState(false);
+  const [addItemForm, setAddItemForm] = useState(INITIAL_ADD_ITEM_FORM);
+  const [isSubmittingNewItem, setIsSubmittingNewItem] = useState(false);
+  const [editItemFormById, setEditItemFormById] = useState({});
+  const [isEditFormOpenById, setIsEditFormOpenById] = useState({});
+  const [isUpdatingItemById, setIsUpdatingItemById] = useState({});
+  const [isDeleteConfirmOpenById, setIsDeleteConfirmOpenById] = useState({});
+  const [isDeletingItemById, setIsDeletingItemById] = useState({});
+  const [soldFlashByItem, setSoldFlashByItem] = useState({});
 
   const statusLabel = useMemo(() => {
     const status = (auction?.status || "scheduled").toLowerCase();
@@ -508,6 +534,18 @@ export default function AuctionRoom() {
             };
           }),
         );
+
+        setSoldFlashByItem((previousState) => ({
+          ...previousState,
+          [soldItemId]: true,
+        }));
+
+        window.setTimeout(() => {
+          setSoldFlashByItem((previousState) => ({
+            ...previousState,
+            [soldItemId]: false,
+          }));
+        }, 2500);
       }
 
       toast.success(
@@ -588,6 +626,272 @@ export default function AuctionRoom() {
       ...previousState,
       [itemId]: String(nextStatus || "pending").toLowerCase(),
     }));
+  };
+
+  const onAddItemInputChange = (field, value) => {
+    setAddItemForm((previousState) => ({
+      ...previousState,
+      [field]: value,
+    }));
+  };
+
+  const onEditItemInputChange = (itemId, field, value) => {
+    setEditItemFormById((previousState) => ({
+      ...previousState,
+      [itemId]: {
+        ...(previousState[itemId] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleToggleEditItemForm = (item) => {
+    const itemId = item?._id || item?.id;
+    if (!itemId) {
+      return;
+    }
+
+    setIsEditFormOpenById((previousState) => {
+      const nextIsOpen = !previousState[itemId];
+
+      if (nextIsOpen) {
+        setEditItemFormById((previousForms) => ({
+          ...previousForms,
+          [itemId]: createItemEditForm(item),
+        }));
+      }
+
+      return {
+        ...previousState,
+        [itemId]: nextIsOpen,
+      };
+    });
+  };
+
+  const handleCloseEditItemForm = (itemId) => {
+    setIsEditFormOpenById((previousState) => ({
+      ...previousState,
+      [itemId]: false,
+    }));
+  };
+
+  const handleToggleDeleteItemConfirm = (itemId, nextValue) => {
+    setIsDeleteConfirmOpenById((previousState) => ({
+      ...previousState,
+      [itemId]: Boolean(nextValue),
+    }));
+  };
+
+  const handleAddItemSubmit = async (event) => {
+    event.preventDefault();
+
+    if (!auctionId) {
+      toast.error("Unable to add an item right now.");
+      return;
+    }
+
+    const title = addItemForm.title.trim();
+    const description = addItemForm.description.trim();
+    const startingPrice = Number(addItemForm.startingPrice);
+    const bidIncrement = Number(addItemForm.bidIncrement || 0);
+    const imageUrls = addItemForm.imageUrls
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (!title) {
+      toast.error("Item title is required.");
+      return;
+    }
+
+    if (!description) {
+      toast.error("Item description is required.");
+      return;
+    }
+
+    if (Number.isNaN(startingPrice) || startingPrice < 0) {
+      toast.error("Starting price must be 0 or more.");
+      return;
+    }
+
+    if (Number.isNaN(bidIncrement) || bidIncrement < 0) {
+      toast.error("Bid increment must be 0 or more.");
+      return;
+    }
+
+    setIsSubmittingNewItem(true);
+
+    try {
+      const response = await axiosInstance.post(`/items/auction/${auctionId}`, {
+        title,
+        description,
+        startingPrice,
+        bidIncrement,
+        imageUrls,
+      });
+
+      const createdItem = response?.data?.data || null;
+      if (!createdItem) {
+        throw new Error("Invalid server response");
+      }
+
+      setItems((previousItems) => [createdItem, ...previousItems]);
+      setStatusInputsByItem((previousState) => ({
+        ...previousState,
+        [createdItem._id || createdItem.id]:
+          (createdItem?.status || "pending").toLowerCase(),
+      }));
+      setAddItemForm(INITIAL_ADD_ITEM_FORM);
+      setIsAddItemFormOpen(false);
+      toast.success("Item added successfully.");
+    } catch (error) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Unable to add this item right now.";
+      toast.error(message);
+    } finally {
+      setIsSubmittingNewItem(false);
+    }
+  };
+
+  const handleUpdateItemDetails = async (item) => {
+    const itemId = item?._id || item?.id;
+    if (!itemId) {
+      toast.error("Unable to update this item right now.");
+      return;
+    }
+
+    const formState = editItemFormById[itemId] || createItemEditForm(item);
+    const title = formState.title.trim();
+    const description = formState.description.trim();
+    const startingPrice = Number(formState.startingPrice);
+    const bidIncrement = Number(formState.bidIncrement || 0);
+    const imageUrls = String(formState.imageUrls || "")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+
+    if (!title) {
+      toast.error("Item title is required.");
+      return;
+    }
+
+    if (!description) {
+      toast.error("Item description is required.");
+      return;
+    }
+
+    if (Number.isNaN(startingPrice) || startingPrice < 0) {
+      toast.error("Starting price must be 0 or more.");
+      return;
+    }
+
+    if (Number.isNaN(bidIncrement) || bidIncrement < 0) {
+      toast.error("Bid increment must be 0 or more.");
+      return;
+    }
+
+    setIsUpdatingItemById((previousState) => ({
+      ...previousState,
+      [itemId]: true,
+    }));
+
+    try {
+      const response = await axiosInstance.patch(`/items/${itemId}`, {
+        title,
+        description,
+        startingPrice,
+        bidIncrement,
+        imageUrls,
+      });
+
+      const updatedItem = response?.data?.data || null;
+      if (!updatedItem) {
+        throw new Error("Invalid server response");
+      }
+
+      setItems((previousItems) =>
+        previousItems.map((entry) => {
+          const entryId = entry?._id || entry?.id;
+          return String(entryId) === String(itemId) ? updatedItem : entry;
+        }),
+      );
+      setEditItemFormById((previousState) => ({
+        ...previousState,
+        [itemId]: createItemEditForm(updatedItem),
+      }));
+      setIsEditFormOpenById((previousState) => ({
+        ...previousState,
+        [itemId]: false,
+      }));
+      toast.success("Item updated successfully.");
+    } catch (error) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Unable to update this item right now.";
+      toast.error(message);
+    } finally {
+      setIsUpdatingItemById((previousState) => ({
+        ...previousState,
+        [itemId]: false,
+      }));
+    }
+  };
+
+  const handleDeleteItem = async (item) => {
+    const itemId = item?._id || item?.id;
+    if (!itemId) {
+      toast.error("Unable to delete this item right now.");
+      return;
+    }
+
+    setIsDeletingItemById((previousState) => ({
+      ...previousState,
+      [itemId]: true,
+    }));
+
+    try {
+      await axiosInstance.delete(`/items/${itemId}`);
+
+      setItems((previousItems) =>
+        previousItems.filter((entry) => {
+          const entryId = entry?._id || entry?.id;
+          return String(entryId) !== String(itemId);
+        }),
+      );
+      setStatusInputsByItem((previousState) => {
+        const nextState = { ...previousState };
+        delete nextState[itemId];
+        return nextState;
+      });
+      setEditItemFormById((previousState) => {
+        const nextState = { ...previousState };
+        delete nextState[itemId];
+        return nextState;
+      });
+      setIsEditFormOpenById((previousState) => ({
+        ...previousState,
+        [itemId]: false,
+      }));
+      setIsDeleteConfirmOpenById((previousState) => ({
+        ...previousState,
+        [itemId]: false,
+      }));
+      toast.success("Item deleted successfully.");
+    } catch (error) {
+      const message =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Unable to delete this item right now.";
+      toast.error(message);
+    } finally {
+      setIsDeletingItemById((previousState) => ({
+        ...previousState,
+        [itemId]: false,
+      }));
+    }
   };
 
   const handleUpdateItemStatus = async (item) => {
@@ -1003,14 +1307,28 @@ export default function AuctionRoom() {
                 href="#"
                 className="mb-0 flex-1"
               />
-              <button
-                type="button"
-                onClick={() => refreshItemsOnly({ showToast: true })}
-                disabled={isRefreshingItems}
-                className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-border px-3 py-1.5 text-[11px] sm:text-xs font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-              >
-                {isRefreshingItems ? "Refreshing..." : "Refresh Items"}
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIsAddItemFormOpen((previousState) => !previousState)
+                    }
+                    disabled={isSubmittingNewItem}
+                    className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {isAddItemFormOpen ? "Hide Form" : "Add Item"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => refreshItemsOnly({ showToast: true })}
+                  disabled={isRefreshingItems}
+                  className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-border px-3 py-1.5 text-[11px] sm:text-xs font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                >
+                  {isRefreshingItems ? "Refreshing..." : "Refresh Items"}
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 lg:gap-6">
@@ -1025,6 +1343,9 @@ export default function AuctionRoom() {
                   const sourceItem = items[index] || {};
                   const sourceItemId =
                     sourceItem?._id || sourceItem?.id || item.id;
+                  const itemEditForm =
+                    editItemFormById[sourceItemId] ||
+                    createItemEditForm(sourceItem);
                   const minimumSuggestedBid =
                     Number(sourceItem?.currentHighestBid || 0) +
                     Number(sourceItem?.bidIncrement || 0);
@@ -1051,18 +1372,40 @@ export default function AuctionRoom() {
                   const isStatusUpdateDisabled = Boolean(
                     isUpdatingStatusByItem[sourceItemId],
                   );
+                  const isItemLocked = ["live", "sold"].includes(itemStatus);
+                  const isEditFormOpen = Boolean(
+                    isEditFormOpenById[sourceItemId],
+                  );
+                  const isUpdatingItem = Boolean(
+                    isUpdatingItemById[sourceItemId],
+                  );
+                  const isDeleteConfirmOpen = Boolean(
+                    isDeleteConfirmOpenById[sourceItemId],
+                  );
+                  const isDeletingItem = Boolean(
+                    isDeletingItemById[sourceItemId],
+                  );
+                  const isSoldFlashing = Boolean(soldFlashByItem[sourceItemId]);
 
                   return (
                     <div key={item.id} className="flex flex-col gap-3">
                       <div
                         className={[
-                          "rounded-2xl",
+                          "relative rounded-2xl",
                           isLiveItem
                             ? "ring-2 ring-green-300 shadow-[0_0_0_1px_rgba(134,239,172,0.65)]"
                             : "",
                         ].join(" ")}
                       >
                         <ItemCard artwork={item} variant="featured" />
+
+                        {isSoldFlashing && (
+                          <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-brand-charcoal/72">
+                            <div className="rounded-full border border-white/30 bg-white/12 px-4 py-2 text-xs sm:text-sm font-sans font-medium text-white">
+                              Sold
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {isLiveItem && (
@@ -1148,6 +1491,215 @@ export default function AuctionRoom() {
 
                           {isHost && (
                             <div className="mt-3 border-t border-brand-border pt-3">
+                              <div className="flex flex-wrap gap-2 mb-3">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleToggleEditItemForm(sourceItem)
+                                  }
+                                  disabled={
+                                    isItemLocked ||
+                                    isUpdatingItem ||
+                                    isDeletingItem
+                                  }
+                                  className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {isEditFormOpen ? "Hide Edit" : "Edit Item"}
+                                </button>
+
+                                {!isDeleteConfirmOpen && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleToggleDeleteItemConfirm(
+                                        sourceItemId,
+                                        true,
+                                      )
+                                    }
+                                    disabled={
+                                      isItemLocked ||
+                                      isUpdatingItem ||
+                                      isDeletingItem
+                                    }
+                                    className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    Delete Item
+                                  </button>
+                                )}
+                              </div>
+
+                              {isItemLocked && (
+                                <p className="text-[11px] sm:text-xs font-sans text-brand-muted mb-3">
+                                  Live or sold items cannot be edited or
+                                  deleted.
+                                </p>
+                              )}
+
+                              {isDeleteConfirmOpen && (
+                                <div className="mb-3 rounded-xl border border-brand-border bg-brand-light/40 p-3">
+                                  <p className="text-[11px] sm:text-xs font-sans text-brand-muted">
+                                    Delete this item permanently?
+                                  </p>
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteItem(sourceItem)}
+                                      disabled={isDeletingItem || isItemLocked}
+                                      className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      {isDeletingItem
+                                        ? "Deleting..."
+                                        : "Confirm Delete"}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        handleToggleDeleteItemConfirm(
+                                          sourceItemId,
+                                          false,
+                                        )
+                                      }
+                                      disabled={isDeletingItem}
+                                      className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      Keep Item
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {isEditFormOpen && (
+                                <div className="mb-3 rounded-xl border border-brand-border bg-brand-light/40 p-3">
+                                  <div className="flex flex-col gap-3">
+                                    <div className="flex flex-col gap-1.5">
+                                      <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
+                                        Title
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={itemEditForm.title}
+                                        onChange={(event) =>
+                                          onEditItemInputChange(
+                                            sourceItemId,
+                                            "title",
+                                            event.target.value,
+                                          )
+                                        }
+                                        disabled={isUpdatingItem || isItemLocked}
+                                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                                      />
+                                    </div>
+
+                                    <div className="flex flex-col gap-1.5">
+                                      <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
+                                        Description
+                                      </label>
+                                      <textarea
+                                        value={itemEditForm.description}
+                                        onChange={(event) =>
+                                          onEditItemInputChange(
+                                            sourceItemId,
+                                            "description",
+                                            event.target.value,
+                                          )
+                                        }
+                                        disabled={isUpdatingItem || isItemLocked}
+                                        rows={3}
+                                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                                      />
+                                    </div>
+
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                      <div className="flex flex-col gap-1.5">
+                                        <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
+                                          Starting Price
+                                        </label>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1}
+                                          value={itemEditForm.startingPrice}
+                                          onChange={(event) =>
+                                            onEditItemInputChange(
+                                              sourceItemId,
+                                              "startingPrice",
+                                              event.target.value,
+                                            )
+                                          }
+                                          disabled={isUpdatingItem || isItemLocked}
+                                          className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                                        />
+                                      </div>
+
+                                      <div className="flex flex-col gap-1.5">
+                                        <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
+                                          Bid Increment
+                                        </label>
+                                        <input
+                                          type="number"
+                                          min={0}
+                                          step={1}
+                                          value={itemEditForm.bidIncrement}
+                                          onChange={(event) =>
+                                            onEditItemInputChange(
+                                              sourceItemId,
+                                              "bidIncrement",
+                                              event.target.value,
+                                            )
+                                          }
+                                          disabled={isUpdatingItem || isItemLocked}
+                                          className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-1.5">
+                                      <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
+                                        Image URLs
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={itemEditForm.imageUrls}
+                                        onChange={(event) =>
+                                          onEditItemInputChange(
+                                            sourceItemId,
+                                            "imageUrls",
+                                            event.target.value,
+                                          )
+                                        }
+                                        disabled={isUpdatingItem || isItemLocked}
+                                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                                      />
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateItemDetails(sourceItem)
+                                        }
+                                        disabled={isUpdatingItem || isItemLocked}
+                                        className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        {isUpdatingItem
+                                          ? "Saving..."
+                                          : "Save Changes"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleCloseEditItemForm(sourceItemId)
+                                        }
+                                        disabled={isUpdatingItem}
+                                        className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        Cancel Edit
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+
                               <p className="text-[11px] sm:text-xs font-sans text-brand-muted mb-2">
                                 Host Item Status Control
                               </p>
@@ -1199,6 +1751,135 @@ export default function AuctionRoom() {
                 </div>
               )}
             </div>
+
+            {isHost && isAddItemFormOpen && (
+              <form
+                onSubmit={handleAddItemSubmit}
+                className="mt-6 rounded-[28px] border border-brand-border bg-white p-6 sm:p-8"
+              >
+                <div className="flex flex-col gap-5">
+                  <div>
+                    <h3 className="font-display text-2xl text-brand-charcoal leading-tight">
+                      Add Auction Item
+                    </h3>
+                    <p className="text-sm text-brand-muted mt-2">
+                      Create a new item for this auction room.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-sm font-sans text-brand-charcoal font-medium">
+                        Title
+                      </label>
+                      <input
+                        type="text"
+                        value={addItemForm.title}
+                        onChange={(event) =>
+                          onAddItemInputChange("title", event.target.value)
+                        }
+                        disabled={isSubmittingNewItem}
+                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-sm font-sans text-brand-charcoal font-medium">
+                        Image URLs
+                      </label>
+                      <input
+                        type="text"
+                        value={addItemForm.imageUrls}
+                        onChange={(event) =>
+                          onAddItemInputChange("imageUrls", event.target.value)
+                        }
+                        disabled={isSubmittingNewItem}
+                        placeholder="https://image-1.jpg, https://image-2.jpg"
+                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-sm font-sans text-brand-charcoal font-medium">
+                      Description
+                    </label>
+                    <textarea
+                      value={addItemForm.description}
+                      onChange={(event) =>
+                        onAddItemInputChange("description", event.target.value)
+                      }
+                      disabled={isSubmittingNewItem}
+                      rows={4}
+                      className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-sm font-sans text-brand-charcoal font-medium">
+                        Starting Price
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={addItemForm.startingPrice}
+                        onChange={(event) =>
+                          onAddItemInputChange(
+                            "startingPrice",
+                            event.target.value,
+                          )
+                        }
+                        disabled={isSubmittingNewItem}
+                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-sm font-sans text-brand-charcoal font-medium">
+                        Bid Increment
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={addItemForm.bidIncrement}
+                        onChange={(event) =>
+                          onAddItemInputChange(
+                            "bidIncrement",
+                            event.target.value,
+                          )
+                        }
+                        disabled={isSubmittingNewItem}
+                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmittingNewItem}
+                      className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-5 py-2.5 text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSubmittingNewItem ? "Adding..." : "Save Item"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddItemForm(INITIAL_ADD_ITEM_FORM);
+                        setIsAddItemFormOpen(false);
+                      }}
+                      disabled={isSubmittingNewItem}
+                      className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-5 py-2.5 text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
           </section>
         </div>
       </section>

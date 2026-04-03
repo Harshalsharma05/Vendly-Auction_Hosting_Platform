@@ -73,8 +73,7 @@ function formatBidTime(value) {
 
 function computeLeaderboard(participants, bids) {
   const statsByUserId = bids.reduce((acc, bid) => {
-    const bidderId =
-      typeof bid?.bidderId === "string" ? bid.bidderId : bid?.bidderId?._id;
+    const bidderId = normalizeEntityId(bid?.bidderId);
 
     if (!bidderId) {
       return acc;
@@ -98,7 +97,7 @@ function computeLeaderboard(participants, bids) {
   return participants
     .map((participant) => {
       const user = participant?.userId || {};
-      const userId = user?._id || String(participant?.userId || "");
+      const userId = normalizeEntityId(user?._id || participant?.userId);
       const userStats = statsByUserId.get(userId) || {
         highestBid: 0,
         totalBids: 0,
@@ -216,11 +215,6 @@ export default function LiveRoomPage() {
     };
   }, [auctionId]);
 
-  const leaderboard = useMemo(
-    () => computeLeaderboard(participants, bids),
-    [bids, participants],
-  );
-
   const bidHistory = useMemo(
     () =>
       [...bids].sort(
@@ -229,6 +223,11 @@ export default function LiveRoomPage() {
           new Date(a?.bidTime || 0).getTime(),
       ),
     [bids],
+  );
+
+  const leaderboard = useMemo(
+    () => computeLeaderboard(participants, bidHistory),
+    [bidHistory, participants],
   );
 
   const refreshItemsOnly = async ({ showToast = false } = {}) => {
@@ -276,7 +275,12 @@ export default function LiveRoomPage() {
       return;
     }
 
-    socket.emit("JOIN_AUCTION", auctionId);
+    const joinRoom = () => {
+      socket.emit("JOIN_AUCTION", auctionId);
+    };
+
+    joinRoom();
+    socket.on("connect", joinRoom);
 
     const handleNewBid = (payload) => {
       if (String(payload?.auctionId || "") !== String(auctionId)) {
@@ -324,6 +328,10 @@ export default function LiveRoomPage() {
     };
 
     const handleItemStatusUpdated = (payload) => {
+      if (String(payload?.auctionId || "") !== String(auctionId)) {
+        return;
+      }
+
       const nextItems = Array.isArray(payload?.items) ? payload.items : [];
       if (nextItems.length > 0) {
         setItems(nextItems);
@@ -343,13 +351,62 @@ export default function LiveRoomPage() {
       });
     };
 
+    const handleItemSold = (payload) => {
+      if (String(payload?.auctionId || "") !== String(auctionId)) {
+        return;
+      }
+
+      const soldItemId = payload?.itemId;
+      if (!soldItemId) {
+        return;
+      }
+
+      setItems((previousItems) =>
+        previousItems.map((item) => {
+          const currentId = item?._id || item?.id;
+          if (String(currentId) !== String(soldItemId)) {
+            return item;
+          }
+
+          return {
+            ...item,
+            status: "sold",
+            currentHighestBid:
+              payload?.winningAmount ?? item?.currentHighestBid ?? 0,
+            currentHighestBidder: payload?.winnerName || item?.currentHighestBidder,
+          };
+        }),
+      );
+
+      setStatusInputsByItem((previousState) => ({
+        ...previousState,
+        [soldItemId]: "sold",
+      }));
+
+      toast.success(payload?.message || "Item sold.", {
+        duration: 2200,
+      });
+    };
+
+    const handleMyBidWon = (payload) => {
+      toast.success(
+        payload?.message || `You won ${payload?.bid?.itemTitle || "an item"}!`,
+        { duration: 4000 },
+      );
+    };
+
     socket.on("NEW_BID", handleNewBid);
     socket.on("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
+    socket.on("ITEM_SOLD", handleItemSold);
+    socket.on("MY_BID_WON", handleMyBidWon);
 
     return () => {
       socket.emit("LEAVE_AUCTION", auctionId);
+      socket.off("connect", joinRoom);
       socket.off("NEW_BID", handleNewBid);
       socket.off("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
+      socket.off("ITEM_SOLD", handleItemSold);
+      socket.off("MY_BID_WON", handleMyBidWon);
     };
   }, [auctionId, isSocketConnected, socket]);
 

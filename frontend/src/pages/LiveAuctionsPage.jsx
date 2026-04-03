@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import axiosInstance from "../lib/axios";
+import { useAuth } from "../context/AuthContext";
 
 const FALLBACK_AUCTION_IMAGE =
   "https://images.unsplash.com/photo-1579546929662-711aa81148cf?w=700&q=80";
@@ -107,8 +108,18 @@ function AuctionGridCard({ auction, faded = false, onOpen }) {
 
 export default function LiveAuctionsPage() {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [auctions, setAuctions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const openAuctionWithGuard = (id) => {
+    if (!isAuthenticated) {
+      toast.error("Please log in to view auction rooms.");
+      navigate("/auth");
+      return;
+    }
+    navigate(`/auction/${id}`);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -203,7 +214,7 @@ export default function LiveAuctionsPage() {
                   <AuctionGridCard
                     key={auction.id}
                     auction={auction}
-                    onOpen={(id) => navigate(`/auction/${id}`)}
+                    onOpen={openAuctionWithGuard}
                   />
                 ))}
 
@@ -241,7 +252,7 @@ export default function LiveAuctionsPage() {
                     key={auction.id}
                     auction={auction}
                     faded
-                    onOpen={(id) => navigate(`/auction/${id}`)}
+                    onOpen={openAuctionWithGuard}
                   />
                 ))}
 

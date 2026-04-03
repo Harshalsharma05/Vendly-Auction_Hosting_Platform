@@ -13,6 +13,7 @@ import auctionRoutes from "./routes/auction.routes.js";
 import itemRoutes from "./routes/item.routes.js";
 import participantRoutes from "./routes/participant.routes.js";
 import bidRoutes from "./routes/bid.routes.js";
+import itemSubmissionRoutes from "./routes/itemSubmission.routes.js";
 
 const app = express();
 
@@ -64,6 +65,7 @@ app.use("/api/auctions", auctionRoutes);
 app.use("/api/items", itemRoutes);
 app.use("/api/participants", participantRoutes);
 app.use("/api/bids", bidRoutes);
+app.use("/api/submissions", itemSubmissionRoutes);
 
 // Error Handling Middlewares
 app.use(notFound);

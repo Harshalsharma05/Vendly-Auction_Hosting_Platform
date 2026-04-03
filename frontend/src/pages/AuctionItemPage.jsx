@@ -258,6 +258,56 @@ export default function AuctionItemPage() {
       });
     };
 
+    const handleItemStatusUpdated = (payload) => {
+      const updatedItemId = payload?.itemId;
+      if (String(updatedItemId || "") !== String(itemId)) {
+        return;
+      }
+
+      const nextStatus = String(payload?.status || "").toLowerCase();
+      const nextItems = Array.isArray(payload?.items) ? payload.items : [];
+      const matchingItem =
+        nextItems.find((entry) => String(entry?._id || entry?.id) === String(itemId)) ||
+        null;
+
+      setItem((previousItem) => {
+        if (!previousItem && !matchingItem) {
+          return previousItem;
+        }
+
+        return {
+          ...(previousItem || {}),
+          ...(matchingItem || {}),
+          status: nextStatus || matchingItem?.status || previousItem?.status,
+        };
+      });
+    };
+
+    const handleItemSold = (payload) => {
+      if (String(payload?.itemId || "") !== String(itemId)) {
+        return;
+      }
+
+      setItem((previousItem) => {
+        if (!previousItem) {
+          return previousItem;
+        }
+
+        return {
+          ...previousItem,
+          status: "sold",
+          currentHighestBid:
+            payload?.winningAmount ?? previousItem.currentHighestBid,
+          currentHighestBidder:
+            payload?.winnerName ?? previousItem.currentHighestBidder,
+        };
+      });
+
+      toast.success(payload?.message || "This item has been sold.", {
+        duration: 2600,
+      });
+    };
+
     // AuctionItemPage.jsx — add inside the useEffect that registers socket.on("NEW_BID", ...)
     const handleMyBidWon = (payload) => {
       toast.success(payload?.message || `You won this item!`, {
@@ -269,6 +319,8 @@ export default function AuctionItemPage() {
 
     socket.on("NEW_BID", handleNewBid);
     socket.on("BID_ERROR", handleBidError);
+    socket.on("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
+    socket.on("ITEM_SOLD", handleItemSold);
 
     if (isSocketConnected) {
       joinRoom();
@@ -280,6 +332,8 @@ export default function AuctionItemPage() {
       socket.emit("LEAVE_AUCTION", auctionId);
       socket.off("NEW_BID", handleNewBid);
       socket.off("BID_ERROR", handleBidError);
+      socket.off("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
+      socket.off("ITEM_SOLD", handleItemSold);
       socket.off("connect", joinRoom);
       socket.off("MY_BID_WON", handleMyBidWon);
     };
@@ -590,6 +644,9 @@ export default function AuctionItemPage() {
 
                 <div className="mt-4 text-xs sm:text-sm text-brand-muted space-y-1">
                   {!isAuthenticated && <p>Please log in to place bids.</p>}
+                  {isAuthenticated && itemStatus === "sold" && (
+                    <p>This item has been sold.</p>
+                  )}
                   {isAuthenticated && itemStatus !== "live" && (
                     <p>
                       This item is currently {itemStatus} and not accepting

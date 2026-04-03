@@ -1,6 +1,7 @@
 import AuctionItem from "../models/auctionItem.model.js";
 import Auction from "../models/auction.model.js";
 import Bid from "../models/bid.model.js";
+import ItemSubmission from "../models/itemSubmission.model.js";
 
 function formatCurrency(value) {
   const numeric = Number(value);
@@ -21,6 +22,7 @@ function formatCurrency(value) {
 export const addAuctionItem = async (req, res, next) => {
   try {
     const { auctionId } = req.params;
+    const { submissionId } = req.body;
 
     // 1. Verify auction exists and user owns it
     const auction = await Auction.findById(auctionId);
@@ -41,13 +43,65 @@ export const addAuctionItem = async (req, res, next) => {
       order = lastItem ? lastItem.order + 1 : 1;
     }
 
-    // 3. Create the item
-    const item = await AuctionItem.create({
+    let itemPayload = {
       ...req.body,
       auctionId,
       order,
-      currentHighestBid: req.body.startingPrice || 0, // Highest bid starts at starting price
-    });
+    };
+
+    if (submissionId) {
+      const submission = await ItemSubmission.findById(submissionId);
+      if (!submission) {
+        res.status(404);
+        return next(new Error("Submission not found"));
+      }
+
+      if (String(submission.auctionId) !== String(auctionId)) {
+        res.status(400);
+        return next(new Error("Submission does not belong to this auction"));
+      }
+
+      if (submission.status !== "approved") {
+        res.status(400);
+        return next(
+          new Error("Only approved submissions can be converted to items"),
+        );
+      }
+
+      const existingItemFromSubmission = await AuctionItem.findOne({
+        auctionId,
+        submittedBy: submission.submittedBy,
+        title: submission.title,
+        description: submission.description,
+        isUserSubmitted: true,
+      });
+
+      if (existingItemFromSubmission) {
+        res.status(400);
+        return next(
+          new Error("An item has already been created from this submission"),
+        );
+      }
+
+      itemPayload = {
+        auctionId,
+        order,
+        title: submission.title,
+        description: submission.description,
+        imageUrls: submission.imageUrls,
+        startingPrice: Number(submission.expectedPrice || 0),
+        bidIncrement: Number(auction.bidIncrement || 0),
+        currentHighestBid: Number(submission.expectedPrice || 0),
+        submittedBy: submission.submittedBy,
+        isUserSubmitted: true,
+        status: "pending",
+      };
+    } else {
+      itemPayload.currentHighestBid = req.body.startingPrice || 0;
+    }
+
+    // 3. Create the item
+    const item = await AuctionItem.create(itemPayload);
 
     // 4. Update the auction's totalItems count
     auction.totalItems += 1;

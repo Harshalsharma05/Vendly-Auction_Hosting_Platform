@@ -9,8 +9,8 @@ import { useAuth } from "../../context/AuthContext";
 
 const QUICK_LINKS = [
   { label: "Live Now", to: "/live-auctions" },
-  { label: "My Auctions", to: "/my-auctions" },
-  { label: "My Bids", to: "/my-bids" },
+  { label: "My Auctions", to: "/my-auctions", requiresAuth: true },
+  { label: "My Bids", to: "/my-bids", requiresAuth: true },
   { label: "Sell", to: "/sell" },
   { label: "How It Works", to: "/how-it-works" },
 ];
@@ -53,6 +53,15 @@ export default function Navbar() {
     setMobileOpen(false);
     toast.success("Logged out successfully.");
     navigate("/");
+  }
+
+    function handleQuickLink(item) {
+    if (item.requiresAuth && !isAuthenticated) {
+      toast.error("Please log in to access this page.");
+      navigate("/auth?mode=login");
+      return;
+    }
+    navigate(item.to);
   }
 
   return (
@@ -101,15 +110,26 @@ export default function Navbar() {
 
         {/* Right-side quick links */}
         <nav className="hidden lg:flex items-center gap-5 text-[13px] text-brand-muted">
-          {QUICK_LINKS.map((item) => (
-            <Link
-              key={item.label}
-              to={item.to}
-              className="hover:text-brand-charcoal transition-colors duration-150"
-            >
-              {item.label}
-            </Link>
-          ))}
+          {QUICK_LINKS.map((item) =>
+            item.requiresAuth ? (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => handleQuickLink(item)}
+                className="hover:text-brand-charcoal transition-colors duration-150"
+              >
+                {item.label}
+              </button>
+            ) : (
+              <Link
+                key={item.label}
+                to={item.to}
+                className="hover:text-brand-charcoal transition-colors duration-150"
+              >
+                {item.label}
+              </Link>
+            ),
+          )}
         </nav>
 
         {/* Auth buttons */}
