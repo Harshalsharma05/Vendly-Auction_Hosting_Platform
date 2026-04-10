@@ -13,6 +13,9 @@ const INITIAL_FORM = {
   endTime: "",
   startingPrice: "",
   bidIncrement: "",
+  finalCallDuration: "30",
+  antiSnipingExtension: "10",
+  bidCooldown: "3",
   status: "draft",
 };
 
@@ -75,6 +78,21 @@ function validate(form) {
     errors.bidIncrement = "Bid increment must be 0 or more.";
   }
 
+  if (form.finalCallDuration === "" || Number(form.finalCallDuration) < 0) {
+    errors.finalCallDuration = "Final call duration must be 0 or more.";
+  }
+
+  if (
+    form.antiSnipingExtension === "" ||
+    Number(form.antiSnipingExtension) < 0
+  ) {
+    errors.antiSnipingExtension = "Anti-sniping extension must be 0 or more.";
+  }
+
+  if (form.bidCooldown === "" || Number(form.bidCooldown) < 0) {
+    errors.bidCooldown = "Bid cooldown must be 0 or more.";
+  }
+
   return errors;
 }
 
@@ -115,6 +133,9 @@ export default function CreateAuctionPage() {
         endTime: new Date(form.endTime).toISOString(),
         startingPrice: Number(form.startingPrice),
         bidIncrement: Number(form.bidIncrement),
+        finalCallDuration: Number(form.finalCallDuration),
+        antiSnipingExtension: Number(form.antiSnipingExtension),
+        bidCooldown: Number(form.bidCooldown),
         status: form.status,
       };
 
@@ -239,8 +260,12 @@ export default function CreateAuctionPage() {
                       disabled={isSubmitting}
                       className={INPUT_CLASS}
                     >
-                      <option value="draft">Draft — save and configure later</option>
-                      <option value="scheduled">Scheduled — publish immediately</option>
+                      <option value="draft">
+                        Draft — save and configure later
+                      </option>
+                      <option value="scheduled">
+                        Scheduled — publish immediately
+                      </option>
                     </select>
                   </FormField>
                 </div>
@@ -291,8 +316,8 @@ export default function CreateAuctionPage() {
                   Pricing Defaults
                 </h2>
                 <p className="text-xs sm:text-sm text-brand-muted mb-5">
-                  These apply to the auction room. Individual items can
-                  override them.
+                  These apply to the auction room. Individual items can override
+                  them.
                 </p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
@@ -329,6 +354,75 @@ export default function CreateAuctionPage() {
                         handleChange("bidIncrement", e.target.value)
                       }
                       placeholder="0"
+                      disabled={isSubmitting}
+                      className={INPUT_CLASS}
+                    />
+                  </FormField>
+                </div>
+              </div>
+
+              {/* Timing Rules */}
+              <div className="rounded-[28px] border border-brand-border bg-white p-6 sm:p-8">
+                <h2 className="font-display text-xl sm:text-2xl text-brand-charcoal mb-1">
+                  Timing Rules
+                </h2>
+                <p className="text-xs sm:text-sm text-brand-muted mb-5">
+                  Control final call behavior, anti-sniping, and bid cooldown.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                  <FormField
+                    label="Final Call Duration (s)"
+                    hint="Default 30"
+                    error={errors.finalCallDuration}
+                  >
+                    <input
+                      type="number"
+                      min={10}
+                      step={1}
+                      value={form.finalCallDuration}
+                      onChange={(e) =>
+                        handleChange("finalCallDuration", e.target.value)
+                      }
+                      placeholder="30"
+                      disabled={isSubmitting}
+                      className={INPUT_CLASS}
+                    />
+                  </FormField>
+
+                  <FormField
+                    label="Anti-Sniping Extension (s)"
+                    hint="Default 10"
+                    error={errors.antiSnipingExtension}
+                  >
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={form.antiSnipingExtension}
+                      onChange={(e) =>
+                        handleChange("antiSnipingExtension", e.target.value)
+                      }
+                      placeholder="10"
+                      disabled={isSubmitting}
+                      className={INPUT_CLASS}
+                    />
+                  </FormField>
+
+                  <FormField
+                    label="Bid Cooldown (s)"
+                    hint="Default 3"
+                    error={errors.bidCooldown}
+                  >
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={form.bidCooldown}
+                      onChange={(e) =>
+                        handleChange("bidCooldown", e.target.value)
+                      }
+                      placeholder="3"
                       disabled={isSubmitting}
                       className={INPUT_CLASS}
                     />

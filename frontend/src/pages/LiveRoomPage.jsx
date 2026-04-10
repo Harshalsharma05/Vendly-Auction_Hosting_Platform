@@ -4,6 +4,10 @@ import toast from "react-hot-toast";
 import axiosInstance from "../lib/axios";
 import { useAuth } from "../context/AuthContext";
 import { useSocket } from "../context/SocketContext";
+import useFinalCallTimer from "../hooks/useFinalCallTimer";
+import FinalCallBanner from "../components/ui/FinalCallBanner";
+import useBidCooldown from "../hooks/useBidCooldown";
+import SocketStatusBadge from "../components/ui/SocketStatusBadge";
 
 const FALLBACK_ITEM_IMAGE =
   "https://images.unsplash.com/photo-1579546929662-711aa81148cf?w=400&q=80";
@@ -131,8 +135,11 @@ export default function LiveRoomPage() {
   const [bids, setBids] = useState([]);
   const [statusInputsByItem, setStatusInputsByItem] = useState({});
   const [isUpdatingStatusByItem, setIsUpdatingStatusByItem] = useState({});
+  const [bidDraftsByItem, setBidDraftsByItem] = useState({});
+  const [isPlacingBidByItem, setIsPlacingBidByItem] = useState({});
   const [isRefreshingItems, setIsRefreshingItems] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFinalCallExtended, setIsFinalCallExtended] = useState(false);
 
   const isHostViewRoute = location.pathname.endsWith("/host-view");
 
@@ -230,6 +237,24 @@ export default function LiveRoomPage() {
     [bidHistory, participants],
   );
 
+  const activeLiveItem = useMemo(
+    () =>
+      items.find((item) => (item?.status || "").toLowerCase() === "live") ||
+      null,
+    [items],
+  );
+
+  const { isFinalCall, remainingMs } = useFinalCallTimer({
+    socket,
+    activeItemId: activeLiveItem?._id,
+  });
+
+  const { isCoolingDown, remainingCooldownMs } = useBidCooldown({
+    socket,
+    cooldownSeconds: auction?.bidCooldown ?? 3,
+  });
+  const cooldownSecondsLeft = Math.ceil(remainingCooldownMs / 1000);
+
   const refreshItemsOnly = async ({ showToast = false } = {}) => {
     if (!auctionId) {
       return;
@@ -274,6 +299,8 @@ export default function LiveRoomPage() {
     if (!socket || !auctionId || !isSocketConnected) {
       return;
     }
+
+    let extensionTimeoutId;
 
     const joinRoom = () => {
       socket.emit("JOIN_AUCTION", auctionId);
@@ -373,7 +400,8 @@ export default function LiveRoomPage() {
             status: "sold",
             currentHighestBid:
               payload?.winningAmount ?? item?.currentHighestBid ?? 0,
-            currentHighestBidder: payload?.winnerName || item?.currentHighestBidder,
+            currentHighestBidder:
+              payload?.winnerName || item?.currentHighestBidder,
           };
         }),
       );
@@ -395,20 +423,227 @@ export default function LiveRoomPage() {
       );
     };
 
+    const handleBidError = (payload) => {
+      toast.error(payload?.message || "Bid rejected. Please try again.", {
+        duration: 2600,
+      });
+    };
+
+    const handleBidCooldownActive = (payload) => {
+      toast(payload?.message || "Cooldown active. Please wait.", {
+        duration: 2200,
+      });
+    };
+
+    const handleFinalCallStarted = (payload) => {
+      if (
+        payload?.auctionId &&
+        String(payload.auctionId) !== String(auctionId)
+      ) {
+        return;
+      }
+
+      setIsFinalCallExtended(false);
+    };
+
+    const handleFinalCallExtended = (payload) => {
+      if (
+        payload?.auctionId &&
+        String(payload.auctionId) !== String(auctionId)
+      ) {
+        return;
+      }
+
+      setIsFinalCallExtended(true);
+
+      if (extensionTimeoutId) {
+        window.clearTimeout(extensionTimeoutId);
+      }
+
+      extensionTimeoutId = window.setTimeout(() => {
+        setIsFinalCallExtended(false);
+      }, 2000);
+    };
+
+    const handleReconnectSync = (payload) => {
+      if (
+        payload?.auctionId &&
+        String(payload.auctionId) !== String(auctionId)
+      ) {
+        return;
+      }
+
+      const syncActiveItem = payload?.activeItem;
+      const syncActiveItemId = syncActiveItem?._id || syncActiveItem?.id;
+
+      if (syncActiveItemId) {
+        setItems((previousItems) => {
+          let didMatchActiveItem = false;
+
+          const nextItems = previousItems.map((item) => {
+            const currentId = item?._id || item?.id;
+
+            if (String(currentId) === String(syncActiveItemId)) {
+              didMatchActiveItem = true;
+              return {
+                ...item,
+                ...syncActiveItem,
+                status: "live",
+              };
+            }
+
+            if ((item?.status || "").toLowerCase() === "live") {
+              return {
+                ...item,
+                status: "pending",
+              };
+            }
+
+            return item;
+          });
+
+          if (!didMatchActiveItem) {
+            return [{ ...syncActiveItem, status: "live" }, ...nextItems];
+          }
+
+          return nextItems;
+        });
+
+        setStatusInputsByItem((previousState) => {
+          const nextState = { ...previousState };
+
+          Object.keys(nextState).forEach((key) => {
+            if (
+              (nextState[key] || "").toLowerCase() === "live" &&
+              String(key) !== String(syncActiveItemId)
+            ) {
+              nextState[key] = "pending";
+            }
+          });
+
+          nextState[syncActiveItemId] = "live";
+          return nextState;
+        });
+      }
+
+      if (payload?.isFinalCall && payload?.finalCallEndTime) {
+        setIsFinalCallExtended(false);
+        toast("Reconnected - final call in progress.", {
+          duration: 1800,
+        });
+      }
+    };
+
     socket.on("NEW_BID", handleNewBid);
     socket.on("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
     socket.on("ITEM_SOLD", handleItemSold);
     socket.on("MY_BID_WON", handleMyBidWon);
+    socket.on("BID_ERROR", handleBidError);
+    socket.on("BID_COOLDOWN_ACTIVE", handleBidCooldownActive);
+    socket.on("FINAL_CALL_STARTED", handleFinalCallStarted);
+    socket.on("FINAL_CALL_EXTENDED", handleFinalCallExtended);
+    socket.on("AUCTION_RECONNECT_SYNC", handleReconnectSync);
 
     return () => {
+      if (extensionTimeoutId) {
+        window.clearTimeout(extensionTimeoutId);
+      }
+
       socket.emit("LEAVE_AUCTION", auctionId);
       socket.off("connect", joinRoom);
       socket.off("NEW_BID", handleNewBid);
       socket.off("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
       socket.off("ITEM_SOLD", handleItemSold);
       socket.off("MY_BID_WON", handleMyBidWon);
+      socket.off("BID_ERROR", handleBidError);
+      socket.off("BID_COOLDOWN_ACTIVE", handleBidCooldownActive);
+      socket.off("FINAL_CALL_STARTED", handleFinalCallStarted);
+      socket.off("FINAL_CALL_EXTENDED", handleFinalCallExtended);
+      socket.off("AUCTION_RECONNECT_SYNC", handleReconnectSync);
     };
   }, [auctionId, isSocketConnected, socket]);
+
+  const handleIncrementBid = (item) => {
+    const targetItemId = item?._id || item?.id;
+    if (!targetItemId) {
+      return;
+    }
+
+    const minSuggestedBid =
+      Number(item?.currentHighestBid || 0) + Number(item?.bidIncrement || 0);
+    const nextStep = Number(item?.bidIncrement || 0) || 1;
+
+    setBidDraftsByItem((previousState) => {
+      const currentDraft = Number(previousState[targetItemId] || 0);
+      const baseBid = currentDraft > 0 ? currentDraft : minSuggestedBid;
+
+      return {
+        ...previousState,
+        [targetItemId]: Math.max(minSuggestedBid, baseBid + nextStep),
+      };
+    });
+  };
+
+  const handleConfirmBid = (item) => {
+    const targetItemId = item?._id || item?.id;
+    const itemStatus = String(item?.status || "pending").toLowerCase();
+
+    if (!targetItemId || !auctionId) {
+      toast.error("Unable to place this bid right now.");
+      return;
+    }
+
+    if (!socket || !isSocketConnected) {
+      toast.error("Socket is not connected yet. Please try again.");
+      return;
+    }
+
+    if (itemStatus !== "live") {
+      toast.error("This item is not live for bidding yet.");
+      return;
+    }
+
+    if (isCoolingDown) {
+      toast("Cooldown active. Please wait before your next bid.", {
+        duration: 1800,
+      });
+      return;
+    }
+
+    const minSuggestedBid =
+      Number(item?.currentHighestBid || 0) + Number(item?.bidIncrement || 0);
+    const draftBid = Number(bidDraftsByItem[targetItemId] || 0);
+    const bidAmount = draftBid > 0 ? draftBid : minSuggestedBid;
+
+    if (Number.isNaN(bidAmount) || bidAmount < minSuggestedBid) {
+      toast.error(`Minimum bid is ${formatCurrency(minSuggestedBid)}.`);
+      return;
+    }
+
+    setIsPlacingBidByItem((previousState) => ({
+      ...previousState,
+      [targetItemId]: true,
+    }));
+
+    socket.emit(
+      "PLACE_BID",
+      { auctionId, itemId: targetItemId, bidAmount },
+      (acknowledgement) => {
+        setIsPlacingBidByItem((previousState) => ({
+          ...previousState,
+          [targetItemId]: false,
+        }));
+
+        if (acknowledgement?.success) {
+          setBidDraftsByItem((previousState) => ({
+            ...previousState,
+            [targetItemId]: 0,
+          }));
+          toast.success("Bid placed successfully.");
+        }
+      },
+    );
+  };
 
   const onStatusInputChange = (itemId, nextStatus) => {
     setStatusInputsByItem((previousState) => ({
@@ -521,37 +756,40 @@ export default function LiveRoomPage() {
                       : "Live participant board and real-time item bidding lane."}
                 </p>
               </div>
-              <div
-                className={[
-                  "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-sans",
-                  isHostControlView || isReadOnlyClientView
-                    ? "border border-brand-border bg-brand-light/60 text-brand-charcoal"
-                    : "border border-green-200 bg-green-50/80 text-green-700",
-                ].join(" ")}
-              >
-                <span className="relative flex h-2.5 w-2.5">
-                  <span
-                    className={[
-                      "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
-                      isHostControlView || isReadOnlyClientView
-                        ? "bg-brand-muted/60"
-                        : "bg-green-400",
-                    ].join(" ")}
-                  />
-                  <span
-                    className={[
-                      "relative inline-flex rounded-full h-2.5 w-2.5",
-                      isHostControlView || isReadOnlyClientView
-                        ? "bg-brand-charcoal"
-                        : "bg-green-500",
-                    ].join(" ")}
-                  />
-                </span>
-                {isHostControlView
-                  ? "Client Host Control View"
-                  : isReadOnlyClientView
-                    ? "Client Read-Only View"
-                    : "Live Room Active"}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <SocketStatusBadge isConnected={isSocketConnected} />
+                <div
+                  className={[
+                    "inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-sans",
+                    isHostControlView || isReadOnlyClientView
+                      ? "border border-brand-border bg-brand-light/60 text-brand-charcoal"
+                      : "border border-green-200 bg-green-50/80 text-green-700",
+                  ].join(" ")}
+                >
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span
+                      className={[
+                        "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                        isHostControlView || isReadOnlyClientView
+                          ? "bg-brand-muted/60"
+                          : "bg-green-400",
+                      ].join(" ")}
+                    />
+                    <span
+                      className={[
+                        "relative inline-flex rounded-full h-2.5 w-2.5",
+                        isHostControlView || isReadOnlyClientView
+                          ? "bg-brand-charcoal"
+                          : "bg-green-500",
+                      ].join(" ")}
+                    />
+                  </span>
+                  {isHostControlView
+                    ? "Client Host Control View"
+                    : isReadOnlyClientView
+                      ? "Client Read-Only View"
+                      : "Live Room Active"}
+                </div>
               </div>
             </div>
           </div>
@@ -575,6 +813,14 @@ export default function LiveRoomPage() {
                     {isRefreshingItems ? "Refreshing..." : "Refresh"}
                   </button>
                 </div>
+              </div>
+
+              <div className="mb-4">
+                <FinalCallBanner
+                  isFinalCall={isFinalCall}
+                  remainingMs={remainingMs}
+                  extended={isFinalCallExtended}
+                />
               </div>
 
               {isLoading ? (
@@ -607,6 +853,19 @@ export default function LiveRoomPage() {
                     const isStatusUpdateDisabled = Boolean(
                       isUpdatingStatusByItem[itemId],
                     );
+                    const minimumSuggestedBid =
+                      Number(item?.currentHighestBid || 0) +
+                      Number(item?.bidIncrement || 0);
+                    const draftedBid = Number(bidDraftsByItem[itemId] || 0);
+                    const nextBidValue =
+                      draftedBid > 0 ? draftedBid : minimumSuggestedBid;
+                    const canPlaceInlineBid =
+                      !isHostControlView &&
+                      !isReadOnlyClientView &&
+                      status === "live" &&
+                      isSocketConnected &&
+                      !isCoolingDown &&
+                      !isPlacingBidByItem[itemId];
 
                     return (
                       <article
@@ -710,12 +969,56 @@ export default function LiveRoomPage() {
                                 View Only
                               </span>
                             ) : (
-                              <Link
-                                to={`/auction/${auctionId}/item/${item?._id}`}
-                                className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-1.5 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200"
-                              >
-                                Bid Now
-                              </Link>
+                              <div className="w-full space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Link
+                                    to={`/auction/${auctionId}/item/${item?._id}`}
+                                    className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-1.5 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200"
+                                  >
+                                    Item Details
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleIncrementBid(item)}
+                                    disabled={
+                                      status !== "live" ||
+                                      !isSocketConnected ||
+                                      isCoolingDown ||
+                                      isPlacingBidByItem[itemId]
+                                    }
+                                    className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-1.5 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    + Increment
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleConfirmBid(item)}
+                                    disabled={!canPlaceInlineBid}
+                                    className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-1.5 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    {isPlacingBidByItem[itemId]
+                                      ? "Placing..."
+                                      : isCoolingDown
+                                        ? `Wait ${cooldownSecondsLeft}s`
+                                        : `Confirm ${formatCurrency(nextBidValue)}`}
+                                  </button>
+                                </div>
+                                <p className="text-[11px] text-brand-muted">
+                                  Minimum next:{" "}
+                                  {formatCurrency(minimumSuggestedBid)}
+                                </p>
+                                {isCoolingDown && (
+                                  <p className="text-[11px] text-brand-muted">
+                                    Cooldown active — {cooldownSecondsLeft}s
+                                    remaining
+                                  </p>
+                                )}
+                                {status !== "live" && (
+                                  <p className="text-[11px] text-brand-muted">
+                                    This item is not live yet.
+                                  </p>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>

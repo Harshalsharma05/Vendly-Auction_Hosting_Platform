@@ -2,6 +2,43 @@ import Auction from "../models/auction.model.js";
 import AuctionItem from "../models/auctionItem.model.js";
 import ItemSubmission from "../models/itemSubmission.model.js";
 
+// @desc    Get pending submissions for a host's auction
+// @route   GET /api/submissions/:auctionId
+// @access  Private/Client
+export const getPendingSubmissions = async (req, res, next) => {
+  try {
+    const { auctionId } = req.params;
+    const clientUserId = req.user?._id;
+
+    const auction = await Auction.findById(auctionId);
+    if (!auction) {
+      res.status(404);
+      return next(new Error("Auction not found"));
+    }
+
+    if (String(auction.createdBy) !== String(clientUserId)) {
+      res.status(403);
+      return next(new Error("Not authorized to view these submissions"));
+    }
+
+    const submissions = await ItemSubmission.find({
+      auctionId,
+      status: "pending",
+    })
+      .sort({ createdAt: -1 })
+      .select(
+        "_id status submittedBy title description imageUrls expectedPrice createdAt",
+      );
+
+    res.status(200).json({
+      success: true,
+      data: submissions,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Submit an item for auction moderation
 // @route   POST /api/submissions/:auctionId
 // @access  Private/Participant
@@ -152,6 +189,7 @@ export const approveSubmission = async (req, res, next) => {
         submissionId: submission._id,
         auctionId: auction._id,
         createdItemId: createdItem._id,
+        submittedBy: submission.submittedBy,
       });
     }
 
@@ -193,6 +231,7 @@ export const rejectSubmission = async (req, res, next) => {
       io.to(`auction_${auction._id.toString()}`).emit("SUBMISSION_REJECTED", {
         submissionId: submission._id,
         auctionId: auction._id,
+        submittedBy: submission.submittedBy,
       });
     }
 

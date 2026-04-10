@@ -1,17 +1,41 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import toast from "react-hot-toast";
 import SectionHeader from "../components/ui/SectionHeader";
 import ItemCard from "../components/ui/ItemCard";
+import RoomHeaderSkeleton from "../components/auction/RoomHeaderSkeleton";
+import ItemSkeleton from "../components/auction/ItemSkeleton";
+import AuctionRoomHeader from "../components/auction/AuctionRoomHeader";
+import AuctionJoinPanel from "../components/auction/AuctionJoinPanel";
+import AuctionHostControlPanel from "../components/auction/AuctionHostControlPanel";
+import AuctionAddItemForm from "../components/auction/AuctionAddItemForm";
+import AuctionItemControlsPanel from "../components/auction/AuctionItemControlsPanel";
+import AuctionSubmitItemPanel from "../components/auction/AuctionSubmitItemPanel";
 import axiosInstance from "../lib/axios";
 import { useSocket } from "../context/SocketContext";
 import { useAuth } from "../context/AuthContext";
+import useFinalCallTimer from "../hooks/useFinalCallTimer";
+import useFinalCallPreview from "../hooks/useFinalCallPreview";
+import usePendingSubmissionIds from "../hooks/usePendingSubmissionIds";
+import useAuctionRoomData from "../hooks/useAuctionRoomData";
+import useAuctionRoomSocketEvents from "../hooks/useAuctionRoomSocketEvents";
+import useAuctionRoomPresence from "../hooks/useAuctionRoomPresence";
+import useAuctionRoomItemActions from "../hooks/useAuctionRoomItemActions";
+import FinalCallBanner from "../components/ui/FinalCallBanner";
+import useBidCooldown from "../hooks/useBidCooldown";
+import {
+  createItemEditForm,
+  formatCurrency,
+  mapItemsToCards,
+  normalizeEntityId,
+} from "../utils/auctionRoom.utils";
 
 const FALLBACK_AUCTION_IMAGE =
   "https://images.unsplash.com/photo-1492707892479-7bc8d5a4ee93?w=1400&q=80";
 const FALLBACK_ITEM_IMAGE =
   "https://images.unsplash.com/photo-1579546929662-711aa81148cf?w=600&q=80";
 const ITEM_STATUS_OPTIONS = ["pending", "live", "sold", "unsold"];
+const ENABLE_FINAL_CALL_PREVIEW = import.meta.env.DEV;
 const INITIAL_ADD_ITEM_FORM = {
   title: "",
   description: "",
@@ -20,147 +44,35 @@ const INITIAL_ADD_ITEM_FORM = {
   imageUrls: "",
 };
 
-function createItemEditForm(item) {
-  return {
-    title: item?.title || "",
-    description: item?.description || "",
-    startingPrice: String(item?.startingPrice ?? ""),
-    bidIncrement: String(item?.bidIncrement ?? 0),
-    imageUrls: Array.isArray(item?.imageUrls) ? item.imageUrls.join(", ") : "",
-  };
-}
-
-function normalizeEntityId(value) {
-  if (!value) {
-    return "";
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (typeof value === "object") {
-    if (typeof value?._id === "string") {
-      return value._id;
-    }
-
-    if (value?._id) {
-      return String(value._id);
-    }
-
-    if (typeof value?.id === "string") {
-      return value.id;
-    }
-
-    if (value?.id) {
-      return String(value.id);
-    }
-  }
-
-  return String(value);
-}
-
-function formatRoomTime(timeValue) {
-  if (!timeValue) {
-    return "To be announced";
-  }
-
-  const parsedDate = new Date(timeValue);
-  if (Number.isNaN(parsedDate.getTime())) {
-    return "To be announced";
-  }
-
-  return parsedDate.toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatCurrency(value) {
-  const numeric = Number(value);
-  if (Number.isNaN(numeric)) {
-    return "$0";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(numeric);
-}
-
-function mapItemsToCards(items) {
-  return items.map((item, index) => {
-    const highestBid = item?.currentHighestBid || item?.startingPrice || 0;
-    const status = (item?.status || "scheduled").toLowerCase();
-
-    return {
-      id: item?._id || item?.id || `item-${index}`,
-      title: item?.title || "Untitled Item",
-      artist: item?.description || "Live auction item",
-      medium: `Increment: ${formatCurrency(item?.bidIncrement || 0)}`,
-      price: formatCurrency(highestBid),
-      sold: status === "sold",
-      src:
-        (Array.isArray(item?.imageUrls) && item.imageUrls[0]) ||
-        item?.image ||
-        FALLBACK_ITEM_IMAGE,
-    };
-  });
-}
-
-function RoomHeaderSkeleton() {
-  return (
-    <div className="rounded-[28px] border border-brand-border overflow-hidden bg-white">
-      <div className="h-52 sm:h-64 w-full bg-brand-light animate-pulse" />
-      <div className="p-6 lg:p-8 space-y-3">
-        <div className="h-7 w-2/3 bg-brand-light rounded animate-pulse" />
-        <div className="h-4 w-1/2 bg-brand-light rounded animate-pulse" />
-        <div className="h-4 w-1/3 bg-brand-light rounded animate-pulse" />
-      </div>
-    </div>
-  );
-}
-
-function ItemSkeleton({ keyId }) {
-  return (
-    <article key={keyId} className="group relative flex flex-col">
-      <div
-        className="relative w-full rounded-xl overflow-hidden bg-brand-light animate-pulse"
-        style={{ aspectRatio: "3/4" }}
-      />
-      <div className="pt-3 space-y-2">
-        <div className="h-4 w-4/5 bg-brand-light rounded animate-pulse" />
-        <div className="h-3 w-3/5 bg-brand-light rounded animate-pulse" />
-      </div>
-    </article>
-  );
-}
-
 export default function AuctionRoom() {
   const { auctionId } = useParams();
   const navigate = useNavigate();
   const { socket, isSocketConnected } = useSocket();
   const { user: currentUser } = useAuth();
 
-  const [auction, setAuction] = useState(null);
-  const [items, setItems] = useState([]);
-  const [isLoadingAuction, setIsLoadingAuction] = useState(true);
-  const [isLoadingItems, setIsLoadingItems] = useState(true);
-  const [isRefreshingItems, setIsRefreshingItems] = useState(false);
+  const {
+    auction,
+    setAuction,
+    items,
+    setItems,
+    isLoadingAuction,
+    isLoadingItems,
+    isRefreshingItems,
+    statusInputsByItem,
+    setStatusInputsByItem,
+    refreshItemsOnly,
+  } = useAuctionRoomData({ auctionId });
   const [isJoined, setIsJoined] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [bidInputs, setBidInputs] = useState({});
   const [isPlacingBidByItem, setIsPlacingBidByItem] = useState({});
-  const [statusInputsByItem, setStatusInputsByItem] = useState({});
   const [isUpdatingStatusByItem, setIsUpdatingStatusByItem] = useState({});
   const [isStartingAuction, setIsStartingAuction] = useState(false);
   const [isAdvancingItem, setIsAdvancingItem] = useState(false);
   const [isEndingAuction, setIsEndingAuction] = useState(false);
   const [isAddItemFormOpen, setIsAddItemFormOpen] = useState(false);
+  const [isSubmitFormOpen, setIsSubmitFormOpen] = useState(false);
+  const [isSubmissionReviewOpen, setIsSubmissionReviewOpen] = useState(false);
   const [addItemForm, setAddItemForm] = useState(INITIAL_ADD_ITEM_FORM);
   const [isSubmittingNewItem, setIsSubmittingNewItem] = useState(false);
   const [editItemFormById, setEditItemFormById] = useState({});
@@ -169,6 +81,13 @@ export default function AuctionRoom() {
   const [isDeleteConfirmOpenById, setIsDeleteConfirmOpenById] = useState({});
   const [isDeletingItemById, setIsDeletingItemById] = useState({});
   const [soldFlashByItem, setSoldFlashByItem] = useState({});
+  const [isFinalCallExtended, setIsFinalCallExtended] = useState(false);
+  const {
+    finalCallPreview,
+    startFinalCallPreview,
+    extendFinalCallPreview,
+    resetFinalCallPreview,
+  } = useFinalCallPreview();
 
   const statusLabel = useMemo(() => {
     const status = (auction?.status || "scheduled").toLowerCase();
@@ -179,11 +98,22 @@ export default function AuctionRoom() {
     auction?.status || "scheduled"
   ).toLowerCase();
   const canJoinLiveAuction = normalizedAuctionStatus === "live";
+  const finalCallDuration = Number(auction?.finalCallDuration ?? 0);
+  const antiSnipingExtension = Number(auction?.antiSnipingExtension ?? 0);
+  const bidCooldown = Number(auction?.bidCooldown ?? 0);
+  const hasTimingRules =
+    finalCallDuration > 0 || antiSnipingExtension > 0 || bidCooldown > 0;
 
   const hostId = normalizeEntityId(auction?.createdBy);
   const currentUserId = normalizeEntityId(currentUser?._id || currentUser?.id);
   const isHost =
     Boolean(hostId) && Boolean(currentUserId) && hostId === currentUserId;
+
+  const pendingSubmissionIds = usePendingSubmissionIds({
+    socket,
+    auctionId,
+    isHost,
+  });
 
   const activeLiveItem = useMemo(
     () =>
@@ -192,456 +122,51 @@ export default function AuctionRoom() {
     [items],
   );
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function fetchAuctionDetails() {
-      setIsLoadingAuction(true);
-      setIsLoadingItems(true);
-
-      try {
-        const [auctionResponse, itemsResponse] = await Promise.all([
-          axiosInstance.get(`/auctions/${auctionId}`),
-          axiosInstance.get(`/items/auction/${auctionId}`),
-        ]);
-
-        const auctionPayload =
-          auctionResponse?.data?.data || auctionResponse?.data || null;
-        const itemsPayload =
-          itemsResponse?.data?.data || itemsResponse?.data || [];
-        const nextItems = Array.isArray(itemsPayload)
-          ? itemsPayload
-          : Array.isArray(itemsPayload?.items)
-            ? itemsPayload.items
-            : [];
-
-        if (isMounted) {
-          setAuction(auctionPayload);
-          setItems(nextItems);
-          setStatusInputsByItem(
-            nextItems.reduce((acc, item) => {
-              const itemId = item?._id || item?.id;
-              if (itemId) {
-                acc[itemId] = (item?.status || "pending").toLowerCase();
-              }
-              return acc;
-            }, {}),
-          );
-        }
-      } catch {
-        if (isMounted) {
-          toast.error("Unable to load this auction room right now.");
-          setAuction(null);
-          setItems([]);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingAuction(false);
-          setIsLoadingItems(false);
-        }
-      }
-    }
-
-    if (auctionId) {
-      fetchAuctionDetails();
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [auctionId]);
-
-  const refreshItemsOnly = async ({ showToast = false } = {}) => {
-    if (!auctionId) {
-      return;
-    }
-
-    setIsRefreshingItems(true);
-
-    try {
-      const itemsResponse = await axiosInstance.get(
-        `/items/auction/${auctionId}`,
-      );
-      const itemsPayload =
-        itemsResponse?.data?.data || itemsResponse?.data || [];
-      const nextItems = Array.isArray(itemsPayload)
-        ? itemsPayload
-        : Array.isArray(itemsPayload?.items)
-          ? itemsPayload.items
-          : [];
-
-      setItems(nextItems);
-      setStatusInputsByItem(
-        nextItems.reduce((acc, item) => {
-          const itemId = item?._id || item?.id;
-          if (itemId) {
-            acc[itemId] = (item?.status || "pending").toLowerCase();
-          }
-          return acc;
-        }, {}),
-      );
-
-      if (showToast) {
-        toast.success("Items refreshed.");
-      }
-    } catch {
-      toast.error("Unable to refresh items right now.");
-    } finally {
-      setIsRefreshingItems(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!socket || !auctionId) {
-      return;
-    }
-
-    const handleAuctionJoined = (payload) => {
-      const message = payload?.message || "A participant joined this auction.";
-
-      toast(message, {
-        duration: 2200,
-        icon: "",
-        style: {
-          background: "#111827",
-          color: "#f9fafb",
-          border: "1px solid #1f2937",
-        },
-      });
-    };
-
-    socket.on("AUCTION_JOINED", handleAuctionJoined);
-
-    const rejoinOnReconnect = () => {
-      if (isJoined) {
-        socket.emit("JOIN_AUCTION", auctionId);
-      }
-    };
-
-    socket.on("connect", rejoinOnReconnect);
-
-    return () => {
-      if (isJoined) {
-        socket.emit("LEAVE_AUCTION", auctionId);
-      }
-      socket.off("AUCTION_JOINED", handleAuctionJoined);
-      socket.off("connect", rejoinOnReconnect);
-    };
-  }, [auctionId, isJoined, socket]);
-
-  useEffect(() => {
-    setIsJoined(false);
-    setIsJoining(false);
-  }, [auctionId]);
-
-  useEffect(() => {
-    if (!socket || !auctionId) {
-      return;
-    }
-
-    const handleNewBid = (payload) => {
-      const nextItemId = payload?.itemId;
-
-      if (!nextItemId) {
-        return;
-      }
-
-      setItems((previousItems) =>
-        previousItems.map((item) => {
-          const currentId = item?._id || item?.id;
-          if (currentId !== nextItemId) {
-            return item;
-          }
-
-          return {
-            ...item,
-            currentHighestBid:
-              payload?.currentHighestBid ?? item.currentHighestBid,
-            currentHighestBidder:
-              payload?.currentHighestBidder ?? item.currentHighestBidder,
-            bidCount: payload?.bidCount ?? item.bidCount,
-          };
-        }),
-      );
-
-      const bidderName =
-        payload?.bid?.bidderId?.name || payload?.currentHighestBidder;
-      const itemTitle = payload?.bid?.itemTitle || "Auction Item";
-      const bidAmount = Number(
-        payload?.bid?.bidAmount || payload?.currentHighestBid || 0,
-      );
-
-      if (bidderName && bidAmount > 0) {
-        toast(
-          payload?.message ||
-            `${bidderName} placed a bid of ${formatCurrency(bidAmount)} on ${itemTitle}.`,
-          {
-            duration: 2200,
-          },
-        );
-      }
-    };
-
-    const handleBidError = (payload) => {
-      const message = payload?.message || "Bid rejected. Please try again.";
-
-      toast.error(message, {
-        duration: 3000,
-        style: {
-          background: "#7f1d1d",
-          color: "#fee2e2",
-          border: "1px solid #b91c1c",
-        },
-      });
-    };
-
-    const handleAuctionStarted = (payload) => {
-      const activeItem = payload?.activeItem;
-      const activeItemId = activeItem?._id || activeItem?.id;
-
-      setAuction((previousAuction) => {
-        if (!previousAuction) {
-          return previousAuction;
-        }
-
-        return {
-          ...previousAuction,
-          status: "live",
-        };
-      });
-
-      if (activeItemId) {
-        setItems((previousItems) =>
-          previousItems.map((item) => {
-            const currentId = item?._id || item?.id;
-
-            if (currentId === activeItemId) {
-              return {
-                ...item,
-                ...activeItem,
-                status: "live",
-              };
-            }
-
-            return {
-              ...item,
-              status:
-                (item?.status || "").toLowerCase() === "live"
-                  ? "pending"
-                  : item.status,
-            };
-          }),
-        );
-      }
-
-      toast.success(payload?.message || "Auction started.");
-    };
-
-    const handleItemTransition = (payload) => {
-      const previousItem = payload?.previousItem;
-      const activeItem = payload?.activeItem;
-      const previousItemId = previousItem?._id || previousItem?.id;
-      const activeItemId = activeItem?._id || activeItem?.id;
-
-      setItems((previousItems) =>
-        previousItems.map((item) => {
-          const currentId = item?._id || item?.id;
-
-          if (previousItemId && currentId === previousItemId) {
-            return {
-              ...item,
-              ...previousItem,
-              status: "sold",
-            };
-          }
-
-          if (activeItemId && currentId === activeItemId) {
-            return {
-              ...item,
-              ...activeItem,
-              status: "live",
-            };
-          }
-
-          return item;
-        }),
-      );
-
-      toast.success(payload?.message || "Moved to next item.");
-    };
-
-    const handleAuctionEnded = (payload) => {
-      setAuction((previousAuction) => {
-        if (!previousAuction) {
-          return previousAuction;
-        }
-
-        return {
-          ...previousAuction,
-          status: "ended",
-        };
-      });
-
-      setIsJoined(false);
-      toast(payload?.message || "Auction has ended.");
-    };
-
-    const handleNoMoreItems = (payload) => {
-      toast(payload?.message || "No more items available.");
-    };
-
-    const handleControlError = (payload) => {
-      toast.error(payload?.message || "Unable to perform this host action.");
-    };
-
-    const handleItemStatusUpdated = (payload) => {
-      const nextItems = Array.isArray(payload?.items) ? payload.items : [];
-
-      if (nextItems.length > 0) {
-        setItems(nextItems);
-        setStatusInputsByItem(
-          nextItems.reduce((acc, entry) => {
-            const entryId = entry?._id || entry?.id;
-            if (entryId) {
-              acc[entryId] = (entry?.status || "pending").toLowerCase();
-            }
-            return acc;
-          }, {}),
-        );
-      }
-
-      if (!isHost) {
-        toast(payload?.message || "Auction item status updated.", {
-          duration: 1800,
-        });
-      }
-    };
-
-    const handleItemSold = (payload) => {
-      const soldItemId = payload?.itemId;
-
-      if (soldItemId) {
-        setItems((previousItems) =>
-          previousItems.map((entry) => {
-            const entryId = entry?._id || entry?.id;
-            if (String(entryId) !== String(soldItemId)) {
-              return entry;
-            }
-
-            return {
-              ...entry,
-              status: "sold",
-            };
-          }),
-        );
-
-        setSoldFlashByItem((previousState) => ({
-          ...previousState,
-          [soldItemId]: true,
-        }));
-
-        window.setTimeout(() => {
-          setSoldFlashByItem((previousState) => ({
-            ...previousState,
-            [soldItemId]: false,
-          }));
-        }, 2500);
-      }
-
-      toast.success(
-        payload?.message ||
-          `${payload?.itemTitle || "Item"} sold to ${payload?.winnerName || "winner"} for ${formatCurrency(payload?.winningAmount || 0)}.`,
-        { duration: 2600 },
-      );
-    };
-
-    // AuctionRoom.jsx — add inside the useEffect that registers socket.on("ITEM_SOLD", ...)
-
-    const handleMyBidWon = (payload) => {
-      toast.success(
-        payload?.message || `You won ${payload?.bid?.itemTitle || "an item"}!`,
-        { duration: 4000 },
-      );
-    };
-
-    socket.on("MY_BID_WON", handleMyBidWon);
-    
-
-    socket.on("NEW_BID", handleNewBid);
-    socket.on("BID_ERROR", handleBidError);
-    socket.on("AUCTION_STARTED", handleAuctionStarted);
-    socket.on("ITEM_TRANSITION", handleItemTransition);
-    socket.on("AUCTION_ENDED", handleAuctionEnded);
-    socket.on("NO_MORE_ITEMS", handleNoMoreItems);
-    socket.on("CONTROL_ERROR", handleControlError);
-    socket.on("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
-    socket.on("ITEM_SOLD", handleItemSold);
-
-    return () => {
-      socket.off("NEW_BID", handleNewBid);
-      socket.off("BID_ERROR", handleBidError);
-      socket.off("AUCTION_STARTED", handleAuctionStarted);
-      socket.off("ITEM_TRANSITION", handleItemTransition);
-      socket.off("AUCTION_ENDED", handleAuctionEnded);
-      socket.off("NO_MORE_ITEMS", handleNoMoreItems);
-      socket.off("CONTROL_ERROR", handleControlError);
-      socket.off("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
-      socket.off("ITEM_SOLD", handleItemSold);
-      socket.off("MY_BID_WON", handleMyBidWon);
-    };
-  }, [auctionId, isHost, socket]);
-
-  // AuctionRoom.jsx — add this effect near the other socket useEffects
-  useEffect(() => {
-    if (!socket || !auctionId || !isHost) {
-      return;
-    }
-
-    const joinAsHost = () => {
-      socket.emit("JOIN_AUCTION", auctionId);
-      console.log("Host auto-joined auction room:", auctionId);
-    };
-
-    if (isSocketConnected) {
-      joinAsHost();
-    }
-
-    socket.on("connect", joinAsHost);
-
-    return () => {
-      socket.off("connect", joinAsHost);
-      socket.emit("LEAVE_AUCTION", auctionId);
-    };
-  }, [auctionId, isHost, isSocketConnected, socket]);
+  const { isFinalCall, remainingMs } = useFinalCallTimer({
+    socket,
+    activeItemId: activeLiveItem?._id,
+  });
+
+  const { isCoolingDown, remainingCooldownMs } = useBidCooldown({
+    socket,
+    cooldownSeconds: auction?.bidCooldown ?? 3,
+  });
+
+  const shouldShowFinalCallBanner = finalCallPreview.active || isFinalCall;
+  const displayedRemainingMs = finalCallPreview.active
+    ? finalCallPreview.remainingMs
+    : remainingMs;
+  const displayedExtended = finalCallPreview.active
+    ? finalCallPreview.extended
+    : isFinalCallExtended;
+
+  useAuctionRoomSocketEvents({
+    socket,
+    auctionId,
+    currentUserId,
+    isHost,
+    setItems,
+    setAuction,
+    setStatusInputsByItem,
+    setSoldFlashByItem,
+    setIsJoined,
+    setIsFinalCallExtended,
+  });
+
+  useAuctionRoomPresence({
+    socket,
+    auctionId,
+    isJoined,
+    setIsJoined,
+    setIsJoining,
+    isHost,
+    isSocketConnected,
+  });
 
   const onBidInputChange = (itemId, rawValue) => {
     setBidInputs((previousInputs) => ({
       ...previousInputs,
       [itemId]: rawValue,
-    }));
-  };
-
-  const onStatusInputChange = (itemId, nextStatus) => {
-    setStatusInputsByItem((previousState) => ({
-      ...previousState,
-      [itemId]: String(nextStatus || "pending").toLowerCase(),
-    }));
-  };
-
-  const onAddItemInputChange = (field, value) => {
-    setAddItemForm((previousState) => ({
-      ...previousState,
-      [field]: value,
-    }));
-  };
-
-  const onEditItemInputChange = (itemId, field, value) => {
-    setEditItemFormById((previousState) => ({
-      ...previousState,
-      [itemId]: {
-        ...(previousState[itemId] || {}),
-        [field]: value,
-      },
     }));
   };
 
@@ -682,295 +207,33 @@ export default function AuctionRoom() {
     }));
   };
 
-  const handleAddItemSubmit = async (event) => {
-    event.preventDefault();
-
-    if (!auctionId) {
-      toast.error("Unable to add an item right now.");
-      return;
-    }
-
-    const title = addItemForm.title.trim();
-    const description = addItemForm.description.trim();
-    const startingPrice = Number(addItemForm.startingPrice);
-    const bidIncrement = Number(addItemForm.bidIncrement || 0);
-    const imageUrls = addItemForm.imageUrls
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-
-    if (!title) {
-      toast.error("Item title is required.");
-      return;
-    }
-
-    if (!description) {
-      toast.error("Item description is required.");
-      return;
-    }
-
-    if (Number.isNaN(startingPrice) || startingPrice < 0) {
-      toast.error("Starting price must be 0 or more.");
-      return;
-    }
-
-    if (Number.isNaN(bidIncrement) || bidIncrement < 0) {
-      toast.error("Bid increment must be 0 or more.");
-      return;
-    }
-
-    setIsSubmittingNewItem(true);
-
-    try {
-      const response = await axiosInstance.post(`/items/auction/${auctionId}`, {
-        title,
-        description,
-        startingPrice,
-        bidIncrement,
-        imageUrls,
-      });
-
-      const createdItem = response?.data?.data || null;
-      if (!createdItem) {
-        throw new Error("Invalid server response");
-      }
-
-      setItems((previousItems) => [createdItem, ...previousItems]);
-      setStatusInputsByItem((previousState) => ({
-        ...previousState,
-        [createdItem._id || createdItem.id]:
-          (createdItem?.status || "pending").toLowerCase(),
-      }));
-      setAddItemForm(INITIAL_ADD_ITEM_FORM);
-      setIsAddItemFormOpen(false);
-      toast.success("Item added successfully.");
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        "Unable to add this item right now.";
-      toast.error(message);
-    } finally {
-      setIsSubmittingNewItem(false);
-    }
-  };
-
-  const handleUpdateItemDetails = async (item) => {
-    const itemId = item?._id || item?.id;
-    if (!itemId) {
-      toast.error("Unable to update this item right now.");
-      return;
-    }
-
-    const formState = editItemFormById[itemId] || createItemEditForm(item);
-    const title = formState.title.trim();
-    const description = formState.description.trim();
-    const startingPrice = Number(formState.startingPrice);
-    const bidIncrement = Number(formState.bidIncrement || 0);
-    const imageUrls = String(formState.imageUrls || "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-
-    if (!title) {
-      toast.error("Item title is required.");
-      return;
-    }
-
-    if (!description) {
-      toast.error("Item description is required.");
-      return;
-    }
-
-    if (Number.isNaN(startingPrice) || startingPrice < 0) {
-      toast.error("Starting price must be 0 or more.");
-      return;
-    }
-
-    if (Number.isNaN(bidIncrement) || bidIncrement < 0) {
-      toast.error("Bid increment must be 0 or more.");
-      return;
-    }
-
-    setIsUpdatingItemById((previousState) => ({
-      ...previousState,
-      [itemId]: true,
-    }));
-
-    try {
-      const response = await axiosInstance.patch(`/items/${itemId}`, {
-        title,
-        description,
-        startingPrice,
-        bidIncrement,
-        imageUrls,
-      });
-
-      const updatedItem = response?.data?.data || null;
-      if (!updatedItem) {
-        throw new Error("Invalid server response");
-      }
-
-      setItems((previousItems) =>
-        previousItems.map((entry) => {
-          const entryId = entry?._id || entry?.id;
-          return String(entryId) === String(itemId) ? updatedItem : entry;
-        }),
-      );
-      setEditItemFormById((previousState) => ({
-        ...previousState,
-        [itemId]: createItemEditForm(updatedItem),
-      }));
-      setIsEditFormOpenById((previousState) => ({
-        ...previousState,
-        [itemId]: false,
-      }));
-      toast.success("Item updated successfully.");
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        "Unable to update this item right now.";
-      toast.error(message);
-    } finally {
-      setIsUpdatingItemById((previousState) => ({
-        ...previousState,
-        [itemId]: false,
-      }));
-    }
-  };
-
-  const handleDeleteItem = async (item) => {
-    const itemId = item?._id || item?.id;
-    if (!itemId) {
-      toast.error("Unable to delete this item right now.");
-      return;
-    }
-
-    setIsDeletingItemById((previousState) => ({
-      ...previousState,
-      [itemId]: true,
-    }));
-
-    try {
-      await axiosInstance.delete(`/items/${itemId}`);
-
-      setItems((previousItems) =>
-        previousItems.filter((entry) => {
-          const entryId = entry?._id || entry?.id;
-          return String(entryId) !== String(itemId);
-        }),
-      );
-      setStatusInputsByItem((previousState) => {
-        const nextState = { ...previousState };
-        delete nextState[itemId];
-        return nextState;
-      });
-      setEditItemFormById((previousState) => {
-        const nextState = { ...previousState };
-        delete nextState[itemId];
-        return nextState;
-      });
-      setIsEditFormOpenById((previousState) => ({
-        ...previousState,
-        [itemId]: false,
-      }));
-      setIsDeleteConfirmOpenById((previousState) => ({
-        ...previousState,
-        [itemId]: false,
-      }));
-      toast.success("Item deleted successfully.");
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        "Unable to delete this item right now.";
-      toast.error(message);
-    } finally {
-      setIsDeletingItemById((previousState) => ({
-        ...previousState,
-        [itemId]: false,
-      }));
-    }
-  };
-
-  const handleUpdateItemStatus = async (item) => {
-    const itemId = item?._id || item?.id;
-    if (!itemId) {
-      toast.error("Unable to update this item status.");
-      return;
-    }
-
-    const selectedStatus = String(
-      statusInputsByItem[itemId] || item?.status || "pending",
-    ).toLowerCase();
-
-    if (!ITEM_STATUS_OPTIONS.includes(selectedStatus)) {
-      toast.error("Please choose a valid item status.");
-      return;
-    }
-
-    setIsUpdatingStatusByItem((previousState) => ({
-      ...previousState,
-      [itemId]: true,
-    }));
-
-    try {
-      const response = await axiosInstance.patch(`/items/${itemId}/status`, {
-        status: selectedStatus,
-      });
-
-      const updatedItem = response?.data?.data || null;
-      if (!updatedItem) {
-        throw new Error("Invalid server response");
-      }
-
-      setItems((previousItems) =>
-        previousItems.map((entry) => {
-          const entryId = entry?._id || entry?.id;
-
-          if (String(entryId) === String(itemId)) {
-            return {
-              ...entry,
-              ...updatedItem,
-              status: (updatedItem?.status || selectedStatus).toLowerCase(),
-            };
-          }
-
-          // Backend enforces one live item by downgrading others to pending.
-          if (
-            selectedStatus === "live" &&
-            (entry?.status || "").toLowerCase() === "live"
-          ) {
-            return {
-              ...entry,
-              status: "pending",
-            };
-          }
-
-          return entry;
-        }),
-      );
-
-      setStatusInputsByItem((previousState) => ({
-        ...previousState,
-        [itemId]: (updatedItem?.status || selectedStatus).toLowerCase(),
-      }));
-
-      toast.success(`Item status updated to ${selectedStatus}.`);
-    } catch (error) {
-      const message =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        "Unable to update item status right now.";
-      toast.error(message);
-    } finally {
-      setIsUpdatingStatusByItem((previousState) => ({
-        ...previousState,
-        [itemId]: false,
-      }));
-    }
-  };
+  const {
+    onStatusInputChange,
+    onAddItemInputChange,
+    onEditItemInputChange,
+    handleAddItemSubmit,
+    handleUpdateItemDetails,
+    handleDeleteItem,
+    handleUpdateItemStatus,
+  } = useAuctionRoomItemActions({
+    auctionId,
+    addItemForm,
+    setAddItemForm,
+    setIsAddItemFormOpen,
+    setIsSubmittingNewItem,
+    editItemFormById,
+    setEditItemFormById,
+    setIsEditFormOpenById,
+    setIsUpdatingItemById,
+    setIsDeleteConfirmOpenById,
+    setIsDeletingItemById,
+    statusInputsByItem,
+    setStatusInputsByItem,
+    setItems,
+    setIsUpdatingStatusByItem,
+    itemStatusOptions: ITEM_STATUS_OPTIONS,
+    initialAddItemForm: INITIAL_ADD_ITEM_FORM,
+  });
 
   const handleJoin = async () => {
     if (!auctionId || isJoining || isJoined) {
@@ -1145,7 +408,10 @@ export default function AuctionRoom() {
     });
   };
 
-  const mappedItems = useMemo(() => mapItemsToCards(items), [items]);
+  const mappedItems = useMemo(
+    () => mapItemsToCards(items, FALLBACK_ITEM_IMAGE),
+    [items],
+  );
 
   return (
     <main className="pt-23 min-h-screen bg-white">
@@ -1163,141 +429,55 @@ export default function AuctionRoom() {
           {isLoadingAuction ? (
             <RoomHeaderSkeleton />
           ) : (
-            <div className="rounded-[28px] border border-brand-border overflow-hidden bg-white">
-              <div className="relative h-52 sm:h-64">
-                <img
-                  src={
-                    auction?.coverImage ||
-                    auction?.image ||
-                    FALLBACK_AUCTION_IMAGE
-                  }
-                  alt={auction?.title || "Auction room"}
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-linear-to-t from-black/45 via-black/20 to-transparent" />
-                <div className="absolute top-4 right-4 rounded-full bg-white/90 border border-brand-border px-3 py-1 text-xs text-brand-charcoal">
-                  {statusLabel}
-                </div>
-              </div>
-
-              <div className="p-6 lg:p-8">
-                <h1 className="font-display text-3xl sm:text-4xl text-brand-charcoal leading-tight mb-3">
-                  {auction?.title || "Auction Room"}
-                </h1>
-                <p className="text-sm sm:text-base text-brand-muted max-w-3xl">
-                  {auction?.description || "Welcome to this live auction room."}
-                </p>
-                <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs sm:text-sm text-brand-muted">
-                  <span>Starts: {formatRoomTime(auction?.startTime)}</span>
-                  <span>Ends: {formatRoomTime(auction?.endTime)}</span>
-                </div>
-              </div>
-            </div>
+            <AuctionRoomHeader
+              auction={auction}
+              statusLabel={statusLabel}
+              isSocketConnected={isSocketConnected}
+              hasTimingRules={hasTimingRules}
+              finalCallDuration={finalCallDuration}
+              antiSnipingExtension={antiSnipingExtension}
+              bidCooldown={bidCooldown}
+              fallbackAuctionImage={FALLBACK_AUCTION_IMAGE}
+            />
           )}
 
-          {!isLoadingAuction && !isHost && (
-            <div className="mt-5 rounded-2xl border border-brand-border bg-white p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <div>
-                <p className="font-display text-lg sm:text-xl text-brand-charcoal leading-tight">
-                  Join Live Auction to Place Bids
-                </p>
-                <p className="text-xs sm:text-sm text-brand-muted mt-1">
-                  {canJoinLiveAuction
-                    ? "Enter the room to activate real-time bidding and live updates."
-                    : normalizedAuctionStatus === "scheduled"
-                      ? `This auction starts ${formatRoomTime(auction?.startTime)}.`
-                      : `This auction is currently ${normalizedAuctionStatus}. Live join is unavailable.`}
-                </p>
-              </div>
+          <AuctionJoinPanel
+            isLoadingAuction={isLoadingAuction}
+            isHost={isHost}
+            canJoinLiveAuction={canJoinLiveAuction}
+            normalizedAuctionStatus={normalizedAuctionStatus}
+            auctionStartTime={auction?.startTime}
+            isJoined={isJoined}
+            isJoining={isJoining}
+            isSocketConnected={isSocketConnected}
+            onJoin={handleJoin}
+            onGoLiveRoom={() => navigate(`/auction/${auctionId}/live-room`)}
+          />
 
-              {!isJoined && canJoinLiveAuction ? (
-                <button
-                  type="button"
-                  onClick={handleJoin}
-                  disabled={isJoining || !isSocketConnected}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-5 py-2.5 text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isJoining ? "Joining..." : "Join Live Auction"}
-                </button>
-              ) : isJoined ? (
-                <button
-                  type="button"
-                  onClick={() => navigate(`/auction/${auctionId}/live-room`)}
-                  className="inline-flex items-center justify-center gap-2 rounded-full bg-green-600 text-white border border-green-600 px-5 py-2.5 text-sm font-sans font-medium hover:bg-green-700 transition-all duration-200"
-                >
-                  <span className="relative flex h-2.5 w-2.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-200 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white" />
-                  </span>
-                  Live Room
-                </button>
-              ) : (
-                <div className="inline-flex items-center gap-2 rounded-full border border-brand-border bg-brand-light/50 px-4 py-2 text-sm font-sans text-brand-muted">
-                  {normalizedAuctionStatus === "scheduled"
-                    ? `Starts ${formatRoomTime(auction?.startTime)}`
-                    : "Live room unavailable"}
-                </div>
-              )}
-            </div>
-          )}
-
-          {!isLoadingAuction && isHost && (
-            <div className="mt-5 rounded-2xl border border-brand-border bg-white p-4 sm:p-5">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div>
-                  <p className="font-display text-lg sm:text-xl text-brand-charcoal leading-tight">
-                    Host Control Panel
-                  </p>
-                  <p className="text-xs sm:text-sm text-brand-muted mt-1">
-                    Manage auction flow for all connected participants.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => navigate(`/auction/${auctionId}/host-view`)}
-                    className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200"
-                  >
-                    Open View Panel
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleStartAuction}
-                    disabled={
-                      isStartingAuction || normalizedAuctionStatus === "ended"
-                    }
-                    className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isStartingAuction ? "Starting..." : "Start Auction"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleNextItem}
-                    disabled={
-                      isAdvancingItem || normalizedAuctionStatus !== "live"
-                    }
-                    className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isAdvancingItem ? "Switching..." : "Next Item"}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleEndAuction}
-                    disabled={
-                      isEndingAuction || normalizedAuctionStatus === "ended"
-                    }
-                    className="inline-flex items-center justify-center rounded-full bg-[#7f1d1d] text-[#fee2e2] border border-[#b91c1c] px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-[#991b1b] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isEndingAuction ? "Ending..." : "End Auction"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+          <AuctionHostControlPanel
+            isLoadingAuction={isLoadingAuction}
+            isHost={isHost}
+            auctionId={auctionId}
+            socket={socket}
+            normalizedAuctionStatus={normalizedAuctionStatus}
+            isStartingAuction={isStartingAuction}
+            isAdvancingItem={isAdvancingItem}
+            isEndingAuction={isEndingAuction}
+            onOpenViewPanel={() => navigate(`/auction/${auctionId}/host-view`)}
+            onStartAuction={handleStartAuction}
+            onNextItem={handleNextItem}
+            onEndAuction={handleEndAuction}
+            enableFinalCallPreview={ENABLE_FINAL_CALL_PREVIEW}
+            finalCallPreview={finalCallPreview}
+            onStartFinalCallPreview={startFinalCallPreview}
+            onExtendFinalCallPreview={extendFinalCallPreview}
+            onResetFinalCallPreview={resetFinalCallPreview}
+            pendingSubmissionCount={pendingSubmissionIds.length}
+            isSubmissionReviewOpen={isSubmissionReviewOpen}
+            onToggleSubmissionReview={() =>
+              setIsSubmissionReviewOpen((previousState) => !previousState)
+            }
+          />
 
           <section className="pt-10">
             <div className="flex items-center justify-between gap-3 mb-5">
@@ -1331,6 +511,16 @@ export default function AuctionRoom() {
               </div>
             </div>
 
+            {shouldShowFinalCallBanner && (
+              <div className="mb-5">
+                <FinalCallBanner
+                  isFinalCall={shouldShowFinalCallBanner}
+                  remainingMs={displayedRemainingMs}
+                  extended={displayedExtended}
+                />
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 lg:gap-6">
               {isLoadingItems &&
                 Array.from({ length: 6 }).map((_, index) => (
@@ -1362,10 +552,14 @@ export default function AuctionRoom() {
                     sourceItem?.status || "pending"
                   ).toLowerCase();
                   const isLiveItem = itemStatus === "live";
+                  const cooldownSecondsLeft = Math.ceil(
+                    remainingCooldownMs / 1000,
+                  );
                   const isBidControlsDisabled =
                     isHost ||
                     !isJoined ||
                     !isLiveItem ||
+                    isCoolingDown ||
                     Boolean(isPlacingBidByItem[sourceItemId]);
                   const selectedStatus =
                     statusInputsByItem[sourceItemId] || itemStatus;
@@ -1418,329 +612,45 @@ export default function AuctionRoom() {
                         </div>
                       )}
 
-                      {(!item.sold || isHost) && (
-                        <div className="rounded-xl border border-brand-border bg-white p-3 sm:p-4">
-                          <div className="space-y-1 mb-3">
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted truncate">
-                              Current Highest Bid:{" "}
-                              {formatCurrency(currentHighestBid)}
-                            </p>
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted truncate">
-                              Bidder: {highestBidderName}
-                            </p>
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                              Total Bids: {bidCount}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                              Minimum Next Bid:{" "}
-                              {formatCurrency(minimumSuggestedBid)}
-                            </p>
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                              Status: {itemStatus}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="number"
-                              min={minimumSuggestedBid}
-                              step={sourceItem?.bidIncrement || 1}
-                              disabled={!isJoined || !isLiveItem}
-                              value={bidInputs[sourceItemId] ?? ""}
-                              onChange={(event) =>
-                                onBidInputChange(
-                                  sourceItemId,
-                                  event.target.value,
-                                )
-                              }
-                              placeholder={`${minimumSuggestedBid}`}
-                              className="flex-1 min-w-0 rounded-full border border-brand-border bg-white px-4 py-2 text-sm text-brand-charcoal placeholder:text-brand-muted/80 outline-none focus:border-brand-charcoal"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleBid(sourceItem)}
-                              disabled={isBidControlsDisabled}
-                              className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {isPlacingBidByItem[sourceItemId]
-                                ? "Placing..."
-                                : "Place Bid"}
-                            </button>
-                          </div>
-
-                          {!isJoined && (
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted mt-2">
-                              Join the live room to enable bidding controls.
-                            </p>
-                          )}
-
-                          {isHost && (
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted mt-2">
-                              Host accounts cannot place bids in this auction.
-                            </p>
-                          )}
-
-                          {isJoined && !isLiveItem && (
-                            <p className="text-[11px] sm:text-xs font-sans text-brand-muted mt-2">
-                              This item will become bid-enabled once it is live.
-                            </p>
-                          )}
-
-                          {isHost && (
-                            <div className="mt-3 border-t border-brand-border pt-3">
-                              <div className="flex flex-wrap gap-2 mb-3">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleToggleEditItemForm(sourceItem)
-                                  }
-                                  disabled={
-                                    isItemLocked ||
-                                    isUpdatingItem ||
-                                    isDeletingItem
-                                  }
-                                  className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {isEditFormOpen ? "Hide Edit" : "Edit Item"}
-                                </button>
-
-                                {!isDeleteConfirmOpen && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleToggleDeleteItemConfirm(
-                                        sourceItemId,
-                                        true,
-                                      )
-                                    }
-                                    disabled={
-                                      isItemLocked ||
-                                      isUpdatingItem ||
-                                      isDeletingItem
-                                    }
-                                    className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  >
-                                    Delete Item
-                                  </button>
-                                )}
-                              </div>
-
-                              {isItemLocked && (
-                                <p className="text-[11px] sm:text-xs font-sans text-brand-muted mb-3">
-                                  Live or sold items cannot be edited or
-                                  deleted.
-                                </p>
-                              )}
-
-                              {isDeleteConfirmOpen && (
-                                <div className="mb-3 rounded-xl border border-brand-border bg-brand-light/40 p-3">
-                                  <p className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                                    Delete this item permanently?
-                                  </p>
-                                  <div className="mt-3 flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteItem(sourceItem)}
-                                      disabled={isDeletingItem || isItemLocked}
-                                      className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      {isDeletingItem
-                                        ? "Deleting..."
-                                        : "Confirm Delete"}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        handleToggleDeleteItemConfirm(
-                                          sourceItemId,
-                                          false,
-                                        )
-                                      }
-                                      disabled={isDeletingItem}
-                                      className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                      Keep Item
-                                    </button>
-                                  </div>
-                                </div>
-                              )}
-
-                              {isEditFormOpen && (
-                                <div className="mb-3 rounded-xl border border-brand-border bg-brand-light/40 p-3">
-                                  <div className="flex flex-col gap-3">
-                                    <div className="flex flex-col gap-1.5">
-                                      <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                                        Title
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={itemEditForm.title}
-                                        onChange={(event) =>
-                                          onEditItemInputChange(
-                                            sourceItemId,
-                                            "title",
-                                            event.target.value,
-                                          )
-                                        }
-                                        disabled={isUpdatingItem || isItemLocked}
-                                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                                      />
-                                    </div>
-
-                                    <div className="flex flex-col gap-1.5">
-                                      <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                                        Description
-                                      </label>
-                                      <textarea
-                                        value={itemEditForm.description}
-                                        onChange={(event) =>
-                                          onEditItemInputChange(
-                                            sourceItemId,
-                                            "description",
-                                            event.target.value,
-                                          )
-                                        }
-                                        disabled={isUpdatingItem || isItemLocked}
-                                        rows={3}
-                                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                                      />
-                                    </div>
-
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                                          Starting Price
-                                        </label>
-                                        <input
-                                          type="number"
-                                          min={0}
-                                          step={1}
-                                          value={itemEditForm.startingPrice}
-                                          onChange={(event) =>
-                                            onEditItemInputChange(
-                                              sourceItemId,
-                                              "startingPrice",
-                                              event.target.value,
-                                            )
-                                          }
-                                          disabled={isUpdatingItem || isItemLocked}
-                                          className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                                        />
-                                      </div>
-
-                                      <div className="flex flex-col gap-1.5">
-                                        <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                                          Bid Increment
-                                        </label>
-                                        <input
-                                          type="number"
-                                          min={0}
-                                          step={1}
-                                          value={itemEditForm.bidIncrement}
-                                          onChange={(event) =>
-                                            onEditItemInputChange(
-                                              sourceItemId,
-                                              "bidIncrement",
-                                              event.target.value,
-                                            )
-                                          }
-                                          disabled={isUpdatingItem || isItemLocked}
-                                          className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                                        />
-                                      </div>
-                                    </div>
-
-                                    <div className="flex flex-col gap-1.5">
-                                      <label className="text-[11px] sm:text-xs font-sans text-brand-muted">
-                                        Image URLs
-                                      </label>
-                                      <input
-                                        type="text"
-                                        value={itemEditForm.imageUrls}
-                                        onChange={(event) =>
-                                          onEditItemInputChange(
-                                            sourceItemId,
-                                            "imageUrls",
-                                            event.target.value,
-                                          )
-                                        }
-                                        disabled={isUpdatingItem || isItemLocked}
-                                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                                      />
-                                    </div>
-
-                                    <div className="flex flex-wrap gap-2">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleUpdateItemDetails(sourceItem)
-                                        }
-                                        disabled={isUpdatingItem || isItemLocked}
-                                        className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                      >
-                                        {isUpdatingItem
-                                          ? "Saving..."
-                                          : "Save Changes"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          handleCloseEditItemForm(sourceItemId)
-                                        }
-                                        disabled={isUpdatingItem}
-                                        className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                      >
-                                        Cancel Edit
-                                      </button>
-                                    </div>
-                                  </div>
-                                </div>
-                              )}
-
-                              <p className="text-[11px] sm:text-xs font-sans text-brand-muted mb-2">
-                                Host Item Status Control
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <select
-                                  value={selectedStatus}
-                                  onChange={(event) =>
-                                    onStatusInputChange(
-                                      sourceItemId,
-                                      event.target.value,
-                                    )
-                                  }
-                                  className="flex-1 min-w-0 rounded-full border border-brand-border bg-white px-4 py-2 text-sm text-brand-charcoal outline-none focus:border-brand-charcoal"
-                                >
-                                  {ITEM_STATUS_OPTIONS.map((statusOption) => (
-                                    <option
-                                      key={statusOption}
-                                      value={statusOption}
-                                    >
-                                      {statusOption.charAt(0).toUpperCase()}
-                                      {statusOption.slice(1)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    handleUpdateItemStatus(sourceItem)
-                                  }
-                                  disabled={isStatusUpdateDisabled}
-                                  className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-4 py-2 text-xs sm:text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                  {isStatusUpdateDisabled
-                                    ? "Saving..."
-                                    : "Update"}
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      <AuctionItemControlsPanel
+                        item={item}
+                        sourceItem={sourceItem}
+                        sourceItemId={sourceItemId}
+                        isHost={isHost}
+                        isJoined={isJoined}
+                        isLiveItem={isLiveItem}
+                        isCoolingDown={isCoolingDown}
+                        cooldownSecondsLeft={cooldownSecondsLeft}
+                        isPlacingBid={Boolean(isPlacingBidByItem[sourceItemId])}
+                        isBidControlsDisabled={isBidControlsDisabled}
+                        bidInputValue={bidInputs[sourceItemId] ?? ""}
+                        onBidInputChange={onBidInputChange}
+                        onBid={handleBid}
+                        currentHighestBid={currentHighestBid}
+                        highestBidderName={highestBidderName}
+                        bidCount={bidCount}
+                        minimumSuggestedBid={minimumSuggestedBid}
+                        itemStatus={itemStatus}
+                        isItemLocked={isItemLocked}
+                        isEditFormOpen={isEditFormOpen}
+                        isUpdatingItem={isUpdatingItem}
+                        isDeleteConfirmOpen={isDeleteConfirmOpen}
+                        isDeletingItem={isDeletingItem}
+                        itemEditForm={itemEditForm}
+                        onToggleEditItemForm={handleToggleEditItemForm}
+                        onToggleDeleteItemConfirm={
+                          handleToggleDeleteItemConfirm
+                        }
+                        onDeleteItem={handleDeleteItem}
+                        onEditItemInputChange={onEditItemInputChange}
+                        onUpdateItemDetails={handleUpdateItemDetails}
+                        onCloseEditItemForm={handleCloseEditItemForm}
+                        selectedStatus={selectedStatus}
+                        statusOptions={ITEM_STATUS_OPTIONS}
+                        onStatusInputChange={onStatusInputChange}
+                        isStatusUpdateDisabled={isStatusUpdateDisabled}
+                        onUpdateItemStatus={handleUpdateItemStatus}
+                      />
                     </div>
                   );
                 })}
@@ -1752,134 +662,29 @@ export default function AuctionRoom() {
               )}
             </div>
 
-            {isHost && isAddItemFormOpen && (
-              <form
-                onSubmit={handleAddItemSubmit}
-                className="mt-6 rounded-[28px] border border-brand-border bg-white p-6 sm:p-8"
-              >
-                <div className="flex flex-col gap-5">
-                  <div>
-                    <h3 className="font-display text-2xl text-brand-charcoal leading-tight">
-                      Add Auction Item
-                    </h3>
-                    <p className="text-sm text-brand-muted mt-2">
-                      Create a new item for this auction room.
-                    </p>
-                  </div>
+            <AuctionAddItemForm
+              isHost={isHost}
+              isOpen={isAddItemFormOpen}
+              addItemForm={addItemForm}
+              isSubmittingNewItem={isSubmittingNewItem}
+              onSubmit={handleAddItemSubmit}
+              onInputChange={onAddItemInputChange}
+              onCancel={() => {
+                setAddItemForm(INITIAL_ADD_ITEM_FORM);
+                setIsAddItemFormOpen(false);
+              }}
+            />
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-sans text-brand-charcoal font-medium">
-                        Title
-                      </label>
-                      <input
-                        type="text"
-                        value={addItemForm.title}
-                        onChange={(event) =>
-                          onAddItemInputChange("title", event.target.value)
-                        }
-                        disabled={isSubmittingNewItem}
-                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-sans text-brand-charcoal font-medium">
-                        Image URLs
-                      </label>
-                      <input
-                        type="text"
-                        value={addItemForm.imageUrls}
-                        onChange={(event) =>
-                          onAddItemInputChange("imageUrls", event.target.value)
-                        }
-                        disabled={isSubmittingNewItem}
-                        placeholder="https://image-1.jpg, https://image-2.jpg"
-                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-sans text-brand-charcoal font-medium">
-                      Description
-                    </label>
-                    <textarea
-                      value={addItemForm.description}
-                      onChange={(event) =>
-                        onAddItemInputChange("description", event.target.value)
-                      }
-                      disabled={isSubmittingNewItem}
-                      rows={4}
-                      className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-sans text-brand-charcoal font-medium">
-                        Starting Price
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={addItemForm.startingPrice}
-                        onChange={(event) =>
-                          onAddItemInputChange(
-                            "startingPrice",
-                            event.target.value,
-                          )
-                        }
-                        disabled={isSubmittingNewItem}
-                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-sans text-brand-charcoal font-medium">
-                        Bid Increment
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={addItemForm.bidIncrement}
-                        onChange={(event) =>
-                          onAddItemInputChange(
-                            "bidIncrement",
-                            event.target.value,
-                          )
-                        }
-                        disabled={isSubmittingNewItem}
-                        className="rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="submit"
-                      disabled={isSubmittingNewItem}
-                      className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-5 py-2.5 text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isSubmittingNewItem ? "Adding..." : "Save Item"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAddItemForm(INITIAL_ADD_ITEM_FORM);
-                        setIsAddItemFormOpen(false);
-                      }}
-                      disabled={isSubmittingNewItem}
-                      className="inline-flex items-center justify-center rounded-full bg-white text-brand-charcoal border border-brand-charcoal px-5 py-2.5 text-sm font-sans font-medium hover:bg-brand-light transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </form>
-            )}
+            <AuctionSubmitItemPanel
+              isHost={isHost}
+              normalizedAuctionStatus={normalizedAuctionStatus}
+              isSubmitFormOpen={isSubmitFormOpen}
+              onToggleSubmitForm={() =>
+                setIsSubmitFormOpen((previousState) => !previousState)
+              }
+              auctionId={auctionId}
+              onSubmitSuccess={() => setIsSubmitFormOpen(false)}
+            />
           </section>
         </div>
       </section>

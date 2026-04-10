@@ -4,6 +4,10 @@ import toast from "react-hot-toast";
 import axiosInstance from "../lib/axios";
 import { useSocket } from "../context/SocketContext";
 import { useAuth } from "../context/AuthContext";
+import useFinalCallTimer from "../hooks/useFinalCallTimer";
+import FinalCallBanner from "../components/ui/FinalCallBanner";
+import useBidCooldown from "../hooks/useBidCooldown";
+import SocketStatusBadge from "../components/ui/SocketStatusBadge";
 
 const FALLBACK_ITEM_IMAGE =
   "https://images.unsplash.com/photo-1579546929662-711aa81148cf?w=700&q=80";
@@ -135,6 +139,17 @@ export default function AuctionItemPage() {
   const [bidAmountInput, setBidAmountInput] = useState("");
   const [isPlacingBid, setIsPlacingBid] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isFinalCallExtended, setIsFinalCallExtended] = useState(false);
+
+  const { isFinalCall, remainingMs } = useFinalCallTimer({
+    socket,
+    activeItemId: item?._id,
+  });
+
+  const { isCoolingDown, remainingCooldownMs } = useBidCooldown({
+    socket,
+    cooldownSeconds: auction?.bidCooldown ?? 3,
+  });
 
   useEffect(() => {
     let isMounted = true;
@@ -193,6 +208,8 @@ export default function AuctionItemPage() {
     if (!socket || !auctionId || !itemId) {
       return;
     }
+
+    let extensionTimeoutId;
 
     const joinRoom = () => {
       socket.emit("JOIN_AUCTION", auctionId);
@@ -267,8 +284,9 @@ export default function AuctionItemPage() {
       const nextStatus = String(payload?.status || "").toLowerCase();
       const nextItems = Array.isArray(payload?.items) ? payload.items : [];
       const matchingItem =
-        nextItems.find((entry) => String(entry?._id || entry?.id) === String(itemId)) ||
-        null;
+        nextItems.find(
+          (entry) => String(entry?._id || entry?.id) === String(itemId),
+        ) || null;
 
       setItem((previousItem) => {
         if (!previousItem && !matchingItem) {
@@ -315,12 +333,98 @@ export default function AuctionItemPage() {
       });
     };
 
+    const handleFinalCallStarted = (payload) => {
+      if (String(payload?.itemId || "") !== String(itemId)) {
+        return;
+      }
+
+      setIsFinalCallExtended(false);
+    };
+
+    const handleFinalCallExtended = (payload) => {
+      if (String(payload?.itemId || "") !== String(itemId)) {
+        return;
+      }
+
+      setIsFinalCallExtended(true);
+
+      if (extensionTimeoutId) {
+        window.clearTimeout(extensionTimeoutId);
+      }
+
+      extensionTimeoutId = window.setTimeout(() => {
+        setIsFinalCallExtended(false);
+      }, 2000);
+    };
+
+    const handleReconnectSync = (payload) => {
+      if (
+        payload?.auctionId &&
+        String(payload.auctionId) !== String(auctionId)
+      ) {
+        return;
+      }
+
+      const syncActiveItem = payload?.activeItem;
+      const syncActiveItemId = syncActiveItem?._id || syncActiveItem?.id;
+
+      if (!syncActiveItemId) {
+        return;
+      }
+
+      if (String(syncActiveItemId) === String(itemId)) {
+        setItem((previousItem) => {
+          if (!previousItem) {
+            return {
+              ...syncActiveItem,
+              status: "live",
+            };
+          }
+
+          return {
+            ...previousItem,
+            ...syncActiveItem,
+            status: "live",
+          };
+        });
+      } else {
+        setItem((previousItem) => {
+          if (!previousItem) {
+            return previousItem;
+          }
+
+          if ((previousItem?.status || "").toLowerCase() !== "live") {
+            return previousItem;
+          }
+
+          return {
+            ...previousItem,
+            status: "pending",
+          };
+        });
+      }
+
+      if (
+        payload?.isFinalCall &&
+        payload?.finalCallEndTime &&
+        String(syncActiveItemId) === String(itemId)
+      ) {
+        setIsFinalCallExtended(false);
+        toast("Reconnected - final call in progress.", {
+          duration: 1800,
+        });
+      }
+    };
+
     socket.on("MY_BID_WON", handleMyBidWon);
 
     socket.on("NEW_BID", handleNewBid);
     socket.on("BID_ERROR", handleBidError);
     socket.on("ITEM_STATUS_UPDATED", handleItemStatusUpdated);
     socket.on("ITEM_SOLD", handleItemSold);
+    socket.on("FINAL_CALL_STARTED", handleFinalCallStarted);
+    socket.on("FINAL_CALL_EXTENDED", handleFinalCallExtended);
+    socket.on("AUCTION_RECONNECT_SYNC", handleReconnectSync);
 
     if (isSocketConnected) {
       joinRoom();
@@ -329,6 +433,10 @@ export default function AuctionItemPage() {
     socket.on("connect", joinRoom);
 
     return () => {
+      if (extensionTimeoutId) {
+        window.clearTimeout(extensionTimeoutId);
+      }
+
       socket.emit("LEAVE_AUCTION", auctionId);
       socket.off("NEW_BID", handleNewBid);
       socket.off("BID_ERROR", handleBidError);
@@ -336,6 +444,9 @@ export default function AuctionItemPage() {
       socket.off("ITEM_SOLD", handleItemSold);
       socket.off("connect", joinRoom);
       socket.off("MY_BID_WON", handleMyBidWon);
+      socket.off("FINAL_CALL_STARTED", handleFinalCallStarted);
+      socket.off("FINAL_CALL_EXTENDED", handleFinalCallExtended);
+      socket.off("AUCTION_RECONNECT_SYNC", handleReconnectSync);
     };
   }, [auctionId, isSocketConnected, itemId, socket]);
 
@@ -348,6 +459,7 @@ export default function AuctionItemPage() {
     isAuthenticated &&
     Boolean(socket) &&
     isSocketConnected;
+  const cooldownSecondsLeft = Math.ceil(remainingCooldownMs / 1000);
 
   const historyList = useMemo(() => {
     if (showFullHistory) {
@@ -448,6 +560,12 @@ export default function AuctionItemPage() {
                 <h1 className="font-display text-3xl sm:text-4xl text-brand-charcoal leading-tight">
                   {item?.title || "Auction Item"}
                 </h1>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <SocketStatusBadge isConnected={isSocketConnected} />
+                  <span className="inline-flex items-center rounded-full border border-brand-border bg-brand-light/50 px-3 py-1 text-xs font-sans text-brand-charcoal capitalize">
+                    {item?.status || "pending"}
+                  </span>
+                </div>
                 <p className="text-sm sm:text-base text-brand-muted mt-2 max-w-3xl">
                   {item?.description ||
                     "Focused live bidding view for this lot."}
@@ -491,6 +609,14 @@ export default function AuctionItemPage() {
                       }
                       alt={item?.title || "Auction item"}
                       className="w-full h-72 sm:h-84 object-cover"
+                    />
+                  </div>
+
+                  <div className="mb-4">
+                    <FinalCallBanner
+                      isFinalCall={isFinalCall}
+                      remainingMs={remainingMs}
+                      extended={isFinalCallExtended}
                     />
                   </div>
 
@@ -617,6 +743,13 @@ export default function AuctionItemPage() {
                 <h2 className="font-display text-2xl sm:text-3xl text-brand-charcoal">
                   Place Your Bid
                 </h2>
+                <div className="mt-4">
+                  <FinalCallBanner
+                    isFinalCall={isFinalCall}
+                    remainingMs={remainingMs}
+                    extended={isFinalCallExtended}
+                  />
+                </div>
                 <p className="text-sm text-brand-muted mt-2">
                   Minimum next bid: {formatCurrency(minimumBidAmount)}
                 </p>
@@ -627,7 +760,7 @@ export default function AuctionItemPage() {
                     min={minimumBidAmount}
                     step={item?.bidIncrement || 1}
                     value={bidAmountInput}
-                    disabled={!canBidNow || isPlacingBid}
+                    disabled={!canBidNow || isPlacingBid || isCoolingDown}
                     onChange={(event) => setBidAmountInput(event.target.value)}
                     placeholder={`${minimumBidAmount}`}
                     className="flex-1 min-w-0 rounded-full border border-brand-border bg-white px-5 py-3 text-sm sm:text-base text-brand-charcoal placeholder:text-brand-muted/80 outline-none focus:border-brand-charcoal disabled:opacity-60"
@@ -635,12 +768,22 @@ export default function AuctionItemPage() {
                   <button
                     type="button"
                     onClick={handlePlaceBid}
-                    disabled={!canBidNow || isPlacingBid}
+                    disabled={!canBidNow || isPlacingBid || isCoolingDown}
                     className="inline-flex items-center justify-center rounded-full bg-brand-charcoal text-white border border-brand-charcoal px-6 py-3 text-sm font-sans font-medium hover:bg-brand-dark transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {isPlacingBid ? "Placing..." : "Place Bid"}
+                    {isPlacingBid
+                      ? "Placing..."
+                      : isCoolingDown
+                        ? `Wait ${cooldownSecondsLeft}s`
+                        : "Place Bid"}
                   </button>
                 </div>
+
+                {isCoolingDown && (
+                  <p className="mt-2 text-[11px] sm:text-xs font-sans text-brand-muted">
+                    Cooldown active — {cooldownSecondsLeft}s remaining
+                  </p>
+                )}
 
                 <div className="mt-4 text-xs sm:text-sm text-brand-muted space-y-1">
                   {!isAuthenticated && <p>Please log in to place bids.</p>}
