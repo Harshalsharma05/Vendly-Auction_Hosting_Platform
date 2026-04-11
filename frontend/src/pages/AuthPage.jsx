@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Loader2, XCircle } from "lucide-react";
 import toast from "react-hot-toast";
 import Button from "../components/ui/Button";
 import { useAuth } from "../context/AuthContext";
@@ -18,6 +18,8 @@ export default function AuthPage() {
 
   const [mode, setMode] = useState(() => useInitialMode(location.search));
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegisterPassword, setShowRegisterPassword] = useState(false);
 
   const [loginForm, setLoginForm] = useState({
     email: "",
@@ -28,8 +30,66 @@ export default function AuthPage() {
     name: "",
     email: "",
     password: "",
+    confirmPassword: "",
     role: "participant",
   });
+
+  const passwordChecks = useMemo(() => {
+    const password = registerForm.password || "";
+
+    return [
+      {
+        key: "length",
+        label: "At least 8 characters",
+        met: password.length >= 8,
+      },
+      {
+        key: "uppercase",
+        label: "Contains an uppercase letter",
+        met: /[A-Z]/.test(password),
+      },
+      { key: "number", label: "Contains a number", met: /\d/.test(password) },
+      {
+        key: "special",
+        label: "Contains a special character",
+        met: /[^A-Za-z0-9]/.test(password),
+      },
+    ];
+  }, [registerForm.password]);
+
+  const passwordStrengthScore = useMemo(
+    () => passwordChecks.filter((rule) => rule.met).length,
+    [passwordChecks],
+  );
+
+  const passwordStrengthTone = useMemo(() => {
+    if (passwordStrengthScore <= 1) {
+      return "bg-red-500";
+    }
+    if (passwordStrengthScore <= 2) {
+      return "bg-amber-500";
+    }
+    return "bg-emerald-500";
+  }, [passwordStrengthScore]);
+
+  const passwordStrengthLabel = useMemo(() => {
+    if (passwordStrengthScore <= 1) {
+      return "Weak";
+    }
+    if (passwordStrengthScore <= 2) {
+      return "Medium";
+    }
+    if (passwordStrengthScore === 3) {
+      return "Strong";
+    }
+    return "Very Strong";
+  }, [passwordStrengthScore]);
+
+  const hasStartedConfirm = registerForm.confirmPassword.length > 0;
+  const passwordsMatch = registerForm.password === registerForm.confirmPassword;
+  const isPasswordTooWeak = passwordStrengthScore < 3;
+  const disableRegisterSubmit =
+    isSubmitting || isPasswordTooWeak || !passwordsMatch;
 
   const heading = useMemo(
     () =>
@@ -64,6 +124,17 @@ export default function AuthPage() {
 
   async function handleRegisterSubmit(event) {
     event.preventDefault();
+
+    if (isPasswordTooWeak) {
+      toast.error("Please choose a stronger password.");
+      return;
+    }
+
+    if (!passwordsMatch) {
+      toast.error("Passwords do not match.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -167,20 +238,36 @@ export default function AuthPage() {
 
                 <label className="block">
                   <span className="text-sm text-brand-muted">Password</span>
-                  <input
-                    type="password"
-                    required
-                    minLength={6}
-                    value={loginForm.password}
-                    onChange={(event) =>
-                      setLoginForm((prev) => ({
-                        ...prev,
-                        password: event.target.value,
-                      }))
-                    }
-                    className="mt-1.5 w-full rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                    placeholder="Enter your password"
-                  />
+                  <div className="relative mt-1.5">
+                    <input
+                      type={showLoginPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      value={loginForm.password}
+                      onChange={(event) =>
+                        setLoginForm((prev) => ({
+                          ...prev,
+                          password: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-brand-border bg-white px-4 py-3 pr-11 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                      placeholder="Enter your password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowLoginPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted hover:text-brand-charcoal transition-colors duration-150"
+                      aria-label={
+                        showLoginPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showLoginPassword ? (
+                        <EyeOff size={18} />
+                      ) : (
+                        <Eye size={18} />
+                      )}
+                    </button>
+                  </div>
                 </label>
 
                 <Button
@@ -238,20 +325,104 @@ export default function AuthPage() {
 
                 <label className="block">
                   <span className="text-sm text-brand-muted">Password</span>
+                  <div className="relative mt-1.5">
+                    <input
+                      type={showRegisterPassword ? "text" : "password"}
+                      required
+                      minLength={8}
+                      value={registerForm.password}
+                      onChange={(event) =>
+                        setRegisterForm((prev) => ({
+                          ...prev,
+                          password: event.target.value,
+                        }))
+                      }
+                      className="w-full rounded-2xl border border-brand-border bg-white px-4 py-3 pr-11 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
+                      placeholder="At least 8 characters"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegisterPassword((prev) => !prev)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-muted hover:text-brand-charcoal transition-colors duration-150"
+                      aria-label={
+                        showRegisterPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showRegisterPassword ? (
+                        <EyeOff size={18} />
+                      ) : (
+                        <Eye size={18} />
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="mt-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <div className="grid grid-cols-4 gap-1.5 flex-1">
+                        {Array.from({ length: 4 }).map((_, index) => {
+                          const isActive = index < passwordStrengthScore;
+                          return (
+                            <div
+                              key={`pwd-strength-${index}`}
+                              className={[
+                                "h-1.5 rounded-full transition-colors duration-200",
+                                isActive
+                                  ? passwordStrengthTone
+                                  : "bg-brand-border",
+                              ].join(" ")}
+                            />
+                          );
+                        })}
+                      </div>
+                      <span className="text-xs text-brand-muted min-w-18.5 text-right">
+                        {passwordStrengthLabel}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1">
+                      {passwordChecks.map((rule) => (
+                        <p
+                          key={rule.key}
+                          className="text-xs text-brand-muted inline-flex items-center gap-1.5"
+                        >
+                          {rule.met ? (
+                            <CheckCircle2
+                              size={14}
+                              className="text-emerald-500"
+                            />
+                          ) : (
+                            <XCircle size={14} className="text-red-500" />
+                          )}
+                          {rule.label}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </label>
+
+                <label className="block">
+                  <span className="text-sm text-brand-muted">
+                    Confirm Password
+                  </span>
                   <input
                     type="password"
                     required
-                    minLength={6}
-                    value={registerForm.password}
+                    minLength={8}
+                    value={registerForm.confirmPassword}
                     onChange={(event) =>
                       setRegisterForm((prev) => ({
                         ...prev,
-                        password: event.target.value,
+                        confirmPassword: event.target.value,
                       }))
                     }
                     className="mt-1.5 w-full rounded-2xl border border-brand-border bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand-rust/20 focus:border-brand-rust/40"
-                    placeholder="At least 6 characters"
+                    placeholder="Re-enter your password"
                   />
+                  {hasStartedConfirm && !passwordsMatch && (
+                    <p className="mt-1.5 text-xs text-red-500">
+                      Passwords do not match.
+                    </p>
+                  )}
                 </label>
 
                 <label className="block">
@@ -276,7 +447,7 @@ export default function AuthPage() {
                   variant="rust"
                   size="md"
                   className="w-full rounded-2xl!"
-                  disabled={isSubmitting}
+                  disabled={disableRegisterSubmit}
                 >
                   {isSubmitting ? (
                     <span className="inline-flex items-center gap-2">
