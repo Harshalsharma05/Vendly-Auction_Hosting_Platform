@@ -1,5 +1,15 @@
 import axios from "axios";
 
+const rawApiUrl = import.meta.env.VITE_API_URL;
+const apiBaseUrl = typeof rawApiUrl === "string" ? rawApiUrl.trim() : "";
+
+if (!apiBaseUrl && import.meta.env.PROD) {
+  // Prevent silent production 404s caused by missing VITE_API_URL on Vercel.
+  console.error(
+    "Missing VITE_API_URL in production. Set it in Vercel project environment variables.",
+  );
+}
+
 function normalizeTokenValue(tokenValue) {
   if (!tokenValue || typeof tokenValue !== "string") {
     return "";
@@ -19,7 +29,7 @@ function normalizeTokenValue(tokenValue) {
 }
 
 const axiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: apiBaseUrl.replace(/\/+$/, ""),
   withCredentials: false,
 });
 

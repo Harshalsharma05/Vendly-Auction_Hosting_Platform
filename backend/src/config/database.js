@@ -14,6 +14,15 @@ const connectDB = async () => {
   } catch (error) {
     console.error(`MongoDB Connection Error: ${error.message}`);
 
+    if (/querySrv ESERVFAIL/i.test(error.message)) {
+      console.error(
+        "Atlas SRV lookup failed. Verify the cluster hostname in MONGO_URI and your DNS/network access.",
+      );
+      console.error(
+        "Try replacing mongodb+srv with a direct mongodb:// URI from Atlas connection options if DNS issues persist.",
+      );
+    }
+
     process.exit(1); // Exit process with failure
   }
 };
