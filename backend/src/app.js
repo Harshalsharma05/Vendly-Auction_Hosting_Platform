@@ -17,7 +17,40 @@ import itemSubmissionRoutes from "./routes/itemSubmission.routes.js";
 
 const app = express();
 
+const defaultAllowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://vendly-auction-hosting-platform.vercel.app",
+];
+
+const envAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = [
+  ...new Set([...defaultAllowedOrigins, ...envAllowedOrigins]),
+];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow non-browser clients (no origin header) and trusted browser origins.
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
+
 // --- SECURITY MIDDLEWARES ---
+
+// Enable CORS before any API middleware so preflight requests always get headers.
+app.use(cors(corsOptions));
 
 // 1. Set Security HTTP Headers
 app.use(helmet());
@@ -26,6 +59,7 @@ app.use(helmet());
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: process.env.NODE_ENV === "production" ? 100 : 10000,
+  skip: (req) => req.method === "OPTIONS",
   message: {
     success: false,
     message: "Too many requests from this IP, please try again later.",
@@ -49,8 +83,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Enable CORS and HTTP request logging
-app.use(cors()); // Enable Cross-Origin Resource Sharing
+// Handle preflight explicitly for all routes.
+app.options(/.*/, cors(corsOptions));
+
+// HTTP request logging
 app.use(morgan("dev")); // Log HTTP requests in the console
 
 // Health Check Route
